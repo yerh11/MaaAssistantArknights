@@ -212,6 +212,25 @@
                     ]
                 },
                 {
+                    "name": "乌尔比干",
+                    "skill": 2,
+                    "recruit_priority": 820,
+                    "promote_priority": 801,
+                    "is_start": true,
+                    "is_key": true,
+                    "recruit_priority_offsets": [
+                        {
+                            "groups": [
+                                "凯尔希",
+                                "近卫",
+                                "召唤"
+                            ],
+                            "threshold": 1,
+                            "offset": -400
+                        }
+                    ]
+                },
+                {
                     "name": "海沫",
                     "skill": 1,
                     "recruit_priority": 650,
