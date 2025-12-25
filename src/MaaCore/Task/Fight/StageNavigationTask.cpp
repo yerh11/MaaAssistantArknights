@@ -1,6 +1,6 @@
 #include "StageNavigationTask.h"
 
-#include <regex>
+#include <boost/regex.hpp>
 
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
@@ -23,9 +23,9 @@ bool asst::StageNavigationTask::set_stage_name(const std::string& stage_name)
     }
     m_is_directly = false;
 
-    static const std::regex stage_regex(R"(^([A-Za-z]{0,3})(\d{1,2})-(\d{1,2})(?:-?(\w+))*$)");
-    std::smatch stage_sm;
-    if (!std::regex_match(stage_name, stage_sm, stage_regex)) {
+    static const boost::regex stage_regex(R"(^([A-Za-z]{0,3})(\d{1,2})-(\d{1,2})(?:-?(\w+))*$)");
+    boost::smatch stage_sm;
+    if (!boost::regex_match(stage_name, stage_sm, stage_regex)) {
         Log.error("The stage name is not in invalid, or is not main line stage", stage_name);
         return false;
     }
@@ -62,7 +62,7 @@ bool asst::StageNavigationTask::set_stage_name(const std::string& stage_name)
     }
 
     std::string upper_prefix = stage_prefix;
-    ranges::transform(upper_prefix, upper_prefix.begin(), [](const char ch) -> char {
+    std::ranges::transform(upper_prefix, upper_prefix.begin(), [](const char ch) -> char {
         return static_cast<char>(::toupper(ch));
     });
     m_stage_code = upper_prefix + chapter + "-" + stage_index;
@@ -113,9 +113,9 @@ bool asst::StageNavigationTask::swipe_and_find_stage()
     Task.get<OcrTaskInfo>(m_stage_code + "@ClickStageName")->text = { m_stage_code };
     std::string replace_m_stage_code = m_stage_code;
     utils::string_replace_all_in_place(replace_m_stage_code, { { "-", "" } });
-    Task.get<OcrTaskInfo>(m_stage_code + "@ClickedCorrectStage")->text = { m_stage_code,
-                                                                           replace_m_stage_code };
-    return ProcessTask(*this, { m_stage_code + "@StageNavigationBegin" })
+    Task.get<OcrTaskInfo>(m_stage_code + "@ClickedCorrectStage")->text = { m_stage_code, replace_m_stage_code };
+
+    return ProcessTask(*this, { m_stage_code + "@ClickStageName", m_stage_code + "@StageNavigationBegin" })
         .set_retry_times(RetryTimesDefault)
         .run();
 }

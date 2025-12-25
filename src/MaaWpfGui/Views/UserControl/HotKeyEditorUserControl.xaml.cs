@@ -1,6 +1,6 @@
 // <copyright file="HotKeyEditorUserControl.xaml.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -10,74 +10,81 @@
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY
 // </copyright>
+
 #nullable enable
 
 using System.Windows;
 using System.Windows.Input;
 using MaaWpfGui.Services.HotKeys;
 
-namespace MaaWpfGui.Views.UserControl
+namespace MaaWpfGui.Views.UserControl;
+
+/// <summary>
+/// Represents a user control for editing and configuring hotkey settings.
+/// Provides a UI interface for users to view and modify keyboard shortcut combinations.
+/// </summary>
+public partial class HotKeyEditorUserControl : System.Windows.Controls.UserControl
 {
-    public partial class HotKeyEditorUserControl : System.Windows.Controls.UserControl
+    public static readonly DependencyProperty HotKeyProperty =
+        DependencyProperty.Register(nameof(HotKey), typeof(MaaHotKey),
+            typeof(HotKeyEditorUserControl),
+            new FrameworkPropertyMetadata(null,
+                FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
+
+    public MaaHotKey? HotKey
     {
-        public static readonly DependencyProperty HotKeyProperty =
-            DependencyProperty.Register(nameof(HotKey), typeof(MaaHotKey),
-                typeof(HotKeyEditorUserControl),
-                new FrameworkPropertyMetadata(default(MaaHotKey),
-                    FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
+        get => (MaaHotKey)GetValue(HotKeyProperty);
+        set => SetValue(HotKeyProperty, value);
+    }
 
-        public MaaHotKey? HotKey
+    public HotKeyEditorUserControl()
+    {
+        InitializeComponent();
+    }
+
+    private void HotKeyTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Don't let the event pass further
+        // because we don't want standard textBox shortcuts working
+        e.Handled = true;
+
+        // Get modifiers and key data
+        var modifiers = Keyboard.Modifiers;
+        bool isWindowsKeyPressed = Keyboard.IsKeyDown(Key.LWin) || Keyboard.IsKeyDown(Key.RWin);
+        modifiers |= isWindowsKeyPressed ? ModifierKeys.Windows : ModifierKeys.None;
+        var key = e.Key;
+
+        // When Alt is pressed, SystemKey is used instead
+        if (key == Key.System)
         {
-            get => (MaaHotKey)GetValue(HotKeyProperty);
-            set => SetValue(HotKeyProperty, value);
+            key = e.SystemKey;
         }
 
-        public HotKeyEditorUserControl()
+        // Remove hotKey if no modifiers
+        if (modifiers == ModifierKeys.None)
         {
-            InitializeComponent();
+            HotKey = null;
+            return;
         }
 
-        private void HotKeyTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        // If no actual key was pressed - return
+        if (key is
+            Key.LeftCtrl or
+            Key.RightCtrl or
+            Key.LeftAlt or
+            Key.RightAlt or
+            Key.LeftShift or
+            Key.RightShift or
+            Key.LWin or
+            Key.RWin or
+            Key.Clear or
+            Key.OemClear or
+            Key.Apps)
         {
-            // Don't let the event pass further
-            // because we don't want standard textBox shortcuts working
-            e.Handled = true;
-
-            // Get modifiers and key data
-            var modifiers = Keyboard.Modifiers;
-            var key = e.Key;
-
-            // When Alt is pressed, SystemKey is used instead
-            if (key == Key.System)
-            {
-                key = e.SystemKey;
-            }
-
-            // Remove hotKey if no modifiers
-            if (modifiers == ModifierKeys.None)
-            {
-                HotKey = null;
-                return;
-            }
-
-            // If no actual key was pressed - return
-            if (key == Key.LeftCtrl ||
-                key == Key.RightCtrl ||
-                key == Key.LeftAlt ||
-                key == Key.RightAlt ||
-                key == Key.LeftShift ||
-                key == Key.RightShift ||
-                key == Key.LWin ||
-                key == Key.RWin ||
-                key == Key.Clear ||
-                key == Key.OemClear ||
-                key == Key.Apps)
-            {
-                return;
-            }
-
-            // Update the value
-            HotKey = new MaaHotKey(key, modifiers);
+            return;
         }
+
+        // Update the value
+        HotKey = new MaaHotKey(key, modifiers);
     }
 }

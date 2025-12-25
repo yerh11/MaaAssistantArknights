@@ -2,7 +2,7 @@
 
 #include "Controller/Controller.h"
 #include "Utils/Logger.hpp"
-#include "Utils/Ranges.hpp"
+#include <ranges>
 
 bool asst::InfrastOfficeTask::_run()
 {
@@ -14,9 +14,19 @@ bool asst::InfrastOfficeTask::_run()
         Log.info("skip this room");
         return true;
     }
-    swipe_to_the_right_of_main_ui();
-    enter_facility();
-    click_bottom_left_tab();
+    swipe_to_the_left_of_main_ui();
+    if (!enter_facility()) {
+        swipe_to_right_of_main_ui();
+        if (!enter_facility()) {
+            return false;
+        }
+    }
+
+    if (!enter_oper_list_page()) {
+        return false;
+    }
+
+    close_quick_formation_expand_role();
 
     for (int i = 0; i <= OperSelectRetryTimes; ++i) {
         if (need_exit()) {

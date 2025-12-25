@@ -2,7 +2,7 @@
 
 #include "Controller/Controller.h"
 #include "Utils/Logger.hpp"
-#include "Utils/Ranges.hpp"
+#include <ranges>
 
 bool asst::InfrastPowerTask::_run()
 {
@@ -28,6 +28,8 @@ bool asst::InfrastPowerTask::_run()
         if (!enter_oper_list_page()) {
             return false;
         }
+
+        close_quick_formation_expand_role();
 
         for (int j = 0; j <= OperSelectRetryTimes; ++j) {
             if (is_use_custom_opers()) {

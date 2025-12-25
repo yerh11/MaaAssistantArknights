@@ -3,7 +3,7 @@
 #include "Controller/Controller.h"
 #include "Task/ProcessTask.h"
 #include "Utils/Logger.hpp"
-#include "Utils/Ranges.hpp"
+#include <ranges>
 
 bool asst::InfrastProcessingTask::_run()
 {
@@ -11,7 +11,8 @@ bool asst::InfrastProcessingTask::_run()
 
     // 不是自定义的也换不了加工站
     if (!is_use_custom_opers()) {
-        return false;
+        Log.info("skip this room");
+        return true;
     }
     // 加工站，啥也造不了，随便写一个
     set_product("Placeholder");
@@ -21,11 +22,19 @@ bool asst::InfrastProcessingTask::_run()
         return true;
     }
 
-    swipe_to_the_right_of_main_ui();
-    enter_facility();
+    swipe_to_the_left_of_main_ui();
+    if (!enter_facility()) {
+        swipe_to_right_of_main_ui();
+        if (!enter_facility()) {
+            return false;
+        }
+    }
+
     click_bottom_left_tab();
 
     ProcessTask(*this, { "InfrastProcessingEnterOperList" }).run();
+
+    close_quick_formation_expand_role();
 
     for (int i = 0; i <= OperSelectRetryTimes; ++i) {
         if (need_exit()) {

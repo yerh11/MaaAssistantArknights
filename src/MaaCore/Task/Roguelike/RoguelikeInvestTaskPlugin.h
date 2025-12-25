@@ -3,22 +3,35 @@
 
 namespace asst
 {
-    // 肉鸽投资插件
-    class RoguelikeInvestTaskPlugin : public AbstractRoguelikeTaskPlugin
-    {
-    public:
-        using AbstractRoguelikeTaskPlugin::AbstractRoguelikeTaskPlugin;
-        virtual ~RoguelikeInvestTaskPlugin() override = default;
-        virtual bool verify(AsstMsg msg, const json::value& details) const override;
+class RoguelikeControlTaskPlugin;
 
-    private:
-        virtual bool _run() override;
-        std::optional<int> ocr_current_count(const auto& img, const auto& task_name);
-        bool is_investment_available(const cv::Mat& image) const;
-        bool is_investment_error(const cv::Mat& image) const;
-        void stop_roguelike();
+// 肉鸽投资插件
+class RoguelikeInvestTaskPlugin : public AbstractRoguelikeTaskPlugin
+{
+public:
+    using AbstractRoguelikeTaskPlugin::AbstractRoguelikeTaskPlugin;
+    virtual ~RoguelikeInvestTaskPlugin() override = default;
+    virtual bool verify(AsstMsg msg, const json::value& details) const override;
+    virtual bool load_params([[maybe_unused]] const json::value& params) override;
 
+    virtual void reset_in_run_variables() override { m_invset_error = false; }
 
-        int m_invest_count = 0;
-    };
+private:
+    virtual bool _run() override;
+    std::optional<int> ocr_count(const auto& img, const auto& task_name) const;
+    bool is_investment_available(const cv::Mat& image) const;
+    bool is_investment_error(const cv::Mat& image) const;
+    // 获取存款
+    std::optional<int> get_deposit(const cv::Mat& image) const;
+    // 获取错误状态下的存款
+    std::optional<int> get_deposit_when_error(const cv::Mat& image) const;
+    // 获取钱包余额
+    std::optional<int> get_wallet(const cv::Mat& image) const;
+    void stop_roguelike() const;
+
+    int m_invest_count = 0;
+    int m_maximum = 0;             // 最大投资次数
+    bool m_stop_when_full = false; // 存款满了就停止
+    bool m_invset_error = false;
+};
 } // namespace asst

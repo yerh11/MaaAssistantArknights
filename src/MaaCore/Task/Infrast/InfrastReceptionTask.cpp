@@ -1,6 +1,6 @@
 #include "InfrastReceptionTask.h"
 
-#include "Utils/Ranges.hpp"
+#include <ranges>
 
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
@@ -14,19 +14,38 @@ bool asst::InfrastReceptionTask::_run()
 {
     m_all_available_opers.clear();
 
-    swipe_to_the_right_of_main_ui();
+    swipe_to_the_left_of_main_ui();
+
     if (!enter_facility()) {
-        return false;
+        swipe_to_right_of_main_ui();
+        if (!enter_facility()) {
+            return false;
+        }
+    }
+
+    if (m_receive_message_board) {
+        receive_message_board();
     }
     click_bottom_left_tab();
 
     close_end_of_clue_exchange();
 
-    // 防止送线索把可以填入的送了
+    get_friend_clue();
+    if (need_exit()) {
+        return false;
+    }
+
     use_clue();
     back_to_reception_main();
+    send_clue();
 
-    get_clue();
+    if (need_exit()) {
+        return false;
+    }
+
+    // 赠送线索后的弹窗会挡住自己新线索的图标
+    sleep(500);
+    get_self_clue();
     if (need_exit()) {
         return false;
     }
@@ -37,9 +56,18 @@ bool asst::InfrastReceptionTask::_run()
     if (need_exit()) {
         return false;
     }
-    shift();
 
+    if (!m_skip_shift) {
+        return shift();
+    }
+
+    Log.info("skip shift in rotation mode");
     return true;
+}
+
+bool asst::InfrastReceptionTask::receive_message_board()
+{
+    return ProcessTask(*this, { "InfrastReceptionReceiveMessageBoard" }).run();
 }
 
 bool asst::InfrastReceptionTask::close_end_of_clue_exchange()
@@ -48,11 +76,31 @@ bool asst::InfrastReceptionTask::close_end_of_clue_exchange()
     return task_temp.run();
 }
 
-bool asst::InfrastReceptionTask::get_clue()
+bool asst::InfrastReceptionTask::get_friend_clue()
 {
-    ProcessTask task_temp(
-        *this, { "InfrastClueSelfNew", "InfrastClueFriendNew", "InfrastClueSelfMaybeFull", "ReceptionFlag" });
+    ProcessTask task_temp(*this, { "InfrastClueFriendNew", "ReceptionFlag" });
     return task_temp.set_retry_times(ProcessTask::RetryTimesDefault).run();
+}
+
+bool asst::InfrastReceptionTask::get_self_clue()
+{
+    constexpr int kRetryTimesDefault = ProcessTask::RetryTimesDefault;
+    auto run_with_retries = [&](const std::vector<std::string>& tasks) {
+        ProcessTask task(*this, tasks);
+        task.set_retry_times(kRetryTimesDefault);
+        return task.run();
+    };
+
+    run_with_retries({ "InfrastClueSelfNew", "InfrastClueSelfMaybeFull", "ReceptionFlag" });
+
+    if (!ProcessTask(*this, { "InfrastClueSelfFull" }).set_retry_times(0).run()) {
+        return run_with_retries({ "CloseCluePage", "ReceptionFlag" });
+    }
+    if (m_enable_clue_exchange) {
+        return run_with_retries({ "CloseCluePageThenSendClue" });
+    }
+
+    return run_with_retries({ "CloseCluePage", "ReceptionFlag" });
 }
 
 bool asst::InfrastReceptionTask::use_clue()
@@ -62,7 +110,8 @@ bool asst::InfrastReceptionTask::use_clue()
     const static std::vector<std::string> clue_suffix = { "No1", "No2", "No3", "No4", "No5", "No6", "No7" };
 
     proc_clue_vacancy();
-    if (unlock_clue_exchange()) {
+    sleep(1000);
+    if (m_enable_clue_exchange && unlock_clue_exchange()) {
         proc_clue_vacancy();
     }
 
@@ -75,7 +124,7 @@ bool asst::InfrastReceptionTask::use_clue()
     vacancy_analyzer.analyze();
 
     const auto& vacancy = vacancy_analyzer.get_vacancy();
-    for (const auto& id : vacancy | views::keys) {
+    for (const auto& id : vacancy | std::views::keys) {
         Log.trace("InfrastReceptionTask | Vacancy", id);
     }
 
@@ -99,6 +148,16 @@ bool asst::InfrastReceptionTask::proc_clue_vacancy()
     const static std::vector<std::string> clue_suffix = { "No1", "No2", "No3", "No4", "No5", "No6", "No7" };
 
     cv::Mat image = ctrler()->get_image();
+
+    // 优先检测官服新增的“快捷置入”按钮，如果存在则点击一次执行批量置入，跳过逐个置入流程
+    const auto quick_insert_task = Task.get("InfrastClueQuickInsert");
+    Matcher quick_insert_matcher(image);
+    quick_insert_matcher.set_task_info(quick_insert_task);
+    if (quick_insert_matcher.analyze()) {
+        ctrler()->click(quick_insert_matcher.get_result().rect);
+        return true;
+    }
+
     for (const std::string& clue : clue_suffix) {
         if (need_exit()) {
             return false;
@@ -128,6 +187,7 @@ bool asst::InfrastReceptionTask::proc_clue_vacancy()
         }
         sort_by_horizontal_(*clue_result_opt);
         ctrler()->click(clue_result_opt->back().rect);
+        delay = Task.get("InfrastClue")->post_delay;
         sleep(delay);
     }
     return true;
@@ -143,13 +203,15 @@ bool asst::InfrastReceptionTask::unlock_clue_exchange()
 bool asst::InfrastReceptionTask::back_to_reception_main()
 {
     ProcessTask(*this, { "EndOfClueExchange" }).set_retry_times(0).run();
-    return ProcessTask(*this, { "BackToReceptionMain" }).run();
+    // 国服有快捷置入后不会进入线索放置页面，不需要返回，多点一次快捷置入也无所谓
+    return ProcessTask(*this, { "InfrastClueQuickInsert", "BackToReceptionMain" }).run();
 }
 
 bool asst::InfrastReceptionTask::send_clue()
 {
+    // 优先检测是否存在“快捷传递重复线索”按钮（官服特性），若存在则点击一次
     ProcessTask task(*this, { "SendClues" });
-    return task.run();
+    return task.set_retry_times(20).run();
 }
 
 bool asst::InfrastReceptionTask::shift()
@@ -184,23 +246,21 @@ bool asst::InfrastReceptionTask::shift()
     }
     sleep(raw_task_ptr->post_delay);
 
-    for (int i = 0; i <= OperSelectRetryTimes; ++i) {
+    close_quick_formation_expand_role();
+
+    int retry_times;
+    for (retry_times = 0; retry_times <= OperSelectRetryTimes; ++retry_times) {
         if (need_exit()) {
             return false;
         }
 
         if (is_use_custom_opers()) {
-            bool name_select_ret = swipe_and_select_custom_opers();
-            if (name_select_ret) {
+            if (swipe_and_select_custom_opers()) {
                 break;
             }
-            else {
-                swipe_to_the_left_of_operlist();
-                continue;
-            }
+            swipe_to_the_left_of_operlist();
+            continue;
         }
-
-        click_clear_button();
 
         if (!opers_detect_with_swipe()) {
             return false;
@@ -208,6 +268,9 @@ bool asst::InfrastReceptionTask::shift()
         swipe_to_the_left_of_operlist();
 
         optimal_calc();
+
+        // 清空按钮放到识别完之后，现在通过切换职业栏来回到界面最左侧，先清空会导致当前设施里的人排到最后面
+        click_clear_button();
         bool ret = opers_choose();
         if (!ret) {
             m_all_available_opers.clear();
@@ -216,6 +279,11 @@ bool asst::InfrastReceptionTask::shift()
         }
         break;
     }
+
+    if (retry_times > OperSelectRetryTimes) {
+        return false;
+    }
+
     click_confirm_button();
     return true;
 }

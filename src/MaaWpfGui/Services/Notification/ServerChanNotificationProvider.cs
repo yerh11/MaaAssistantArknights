@@ -1,6 +1,6 @@
 // <copyright file="ServerChanNotificationProvider.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -12,72 +12,80 @@
 // </copyright>
 
 using System;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using MaaWpfGui.Constants;
-using MaaWpfGui.Helper;
 using MaaWpfGui.Services.Web;
+using MaaWpfGui.ViewModels.UI;
 using Serilog;
 
-namespace MaaWpfGui.Services.Notification
+namespace MaaWpfGui.Services.Notification;
+
+public class ServerChanNotificationProvider(IHttpService httpService) : IExternalNotificationProvider
 {
-    public class ServerChanNotificationProvider : IExternalNotificationProvider
+    private readonly ILogger _logger = Log.ForContext<ServerChanNotificationProvider>();
+
+    public async Task<bool> SendAsync(string title, string content)
     {
-        private readonly IHttpService _httpService;
+        // 去掉 title 中的换行符
+        title = title.Replace("\n", string.Empty);
 
-        private readonly ILogger _logger = Log.ForContext<ServerChanNotificationProvider>();
-
-        public ServerChanNotificationProvider(IHttpService httpService)
+        // 确保 title 的长度不超过 32 个字符
+        if (title.Length > 32)
         {
-            _httpService = httpService;
+            title = title[..32]; // 截取前 32 个字符
         }
 
-        public async Task<bool> SendAsync(string title, string content)
+        var sendKey = SettingsViewModel.ExternalNotificationSettings.ServerChanSendKey;
+
+        try
         {
-            var sendKey = ConfigurationHelper.GetValue(ConfigurationKeys.ExternalNotificationServerChanSendKey, string.Empty);
-            var url = $"https://sctapi.ftqq.com/{sendKey}.send";
+            var url = ConstructUrl(sendKey);
+            var postData = $"text={Uri.EscapeDataString(title)}&desp={Uri.EscapeDataString(content)}";
 
-            var response = await _httpService.PostAsJsonAsync(
-                new Uri(url),
-                new ServerChanPostContent { Title = title, Content = content, });
+            var response = await httpService.PostAsync(new(url), new StringContent(postData, Encoding.UTF8, "application/x-www-form-urlencoded"));
+            var responseContent = await response.Content.ReadAsStringAsync();
 
-            var responseRoot = JsonDocument.Parse(response).RootElement;
-            var hasCodeProperty = responseRoot.TryGetProperty("code", out var codeElement);
-            if (hasCodeProperty is false)
+            var responseRoot = JsonDocument.Parse(responseContent).RootElement;
+            if (responseRoot.TryGetProperty("code", out var codeElement) && codeElement.TryGetInt32(out var code))
             {
-                _logger.Warning("Failed to send ServerChan notification, unknown response, {Response}", response);
-                return false;
-            }
+                if (code == 0)
+                {
+                    return true;
+                }
 
-            var hasCode = codeElement.TryGetInt32(out var code);
-            if (hasCode is false)
+                _logger.Warning("Failed to send ServerChan notification, code: {Value}", code);
+            }
+            else
             {
-                _logger.Warning("Failed to send ServerChan notification, unknown response {Response}", response);
-                return false;
+                _logger.Warning("Failed to send ServerChan notification, unknown response: {ResponseContent}", responseContent);
             }
-
-            if (code == 0)
-            {
-                return true;
-            }
-
-            _logger.Warning("Failed to send ServerChan notification, code {Code}", code);
-            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Exception occurred while sending ServerChan notification.");
         }
 
-        private class ServerChanPostContent
+        return false;
+    }
+
+    private static string ConstructUrl(string sendKey)
+    {
+        if (!sendKey.StartsWith("sctp"))
         {
-            // 这两个没用过，不知道有没有用，之后再看看
-            [JsonPropertyName("title")]
-
-            // ReSharper disable once UnusedAutoPropertyAccessor.Local
-            public string Title { get; set; }
-
-            [JsonPropertyName("desp")]
-
-            // ReSharper disable once UnusedAutoPropertyAccessor.Local
-            public string Content { get; set; }
+            return $"https://sctapi.ftqq.com/{sendKey}.send";
         }
+
+        // Server酱3
+        var match = Regex.Match(sendKey, @"^sctp(\d+)t");
+        if (!match.Success)
+        {
+            throw new ArgumentException("Invalid key format for sctp.");
+        }
+
+        var num = match.Groups[1].Value;
+        return $"https://{num}.push.ft07.com/send/{sendKey}.send";
     }
 }

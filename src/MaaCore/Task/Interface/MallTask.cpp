@@ -6,14 +6,14 @@
 
 #include "Utils/Logger.hpp"
 
-asst::MallTask::MallTask(const AsstCallback& callback, Assistant* inst)
-    : InterfaceTask(callback, inst, TaskType),
-      m_visit_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
-      m_credit_fight_task_ptr(std::make_shared<CreditFightTask>(callback, inst, TaskType)),
-      m_mall_task_ptr(std::make_shared<ProcessTask>(callback, inst, TaskType)),
-      m_shopping_first_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType)),
-      m_shopping_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType)),
-      m_shopping_force_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType))
+asst::MallTask::MallTask(const AsstCallback& callback, Assistant* inst) :
+    InterfaceTask(callback, inst, TaskType),
+    m_visit_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
+    m_credit_fight_task_ptr(std::make_shared<CreditFightTask>(callback, inst, TaskType)),
+    m_mall_task_ptr(std::make_shared<ProcessTask>(callback, inst, TaskType)),
+    m_shopping_first_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType)),
+    m_shopping_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType)),
+    m_shopping_force_task_ptr(std::make_shared<CreditShoppingTask>(callback, inst, TaskType))
 {
     LogTraceFunction;
 
@@ -104,14 +104,24 @@ bool asst::MallTask::set_params(const json::value& params)
         m_shopping_force_task_ptr->set_enable(false);
     }
 
-    if (!m_running) {
-        bool credit_fight = params.get("credit_fight", false);
-        m_credit_fight_task_ptr->set_enable(credit_fight);
+    // ————————————————————————————————————————————————————————————————
+    // 借助战打一局 OF-1 关卡以便在第二天获得更多信用
+    // ————————————————————————————————————————————————————————————————
+    bool credit_fight = params.get("credit_fight", false);
+    m_credit_fight_task_ptr->set_enable(credit_fight);
 
-        int select_formation = params.get("select_formation", 0);
-        m_credit_fight_task_ptr->set_select_formation(select_formation);
-        Log.trace("selecting formation", select_formation);
+    int formation_index = params.get("formation_index", 0);
+    if (!params.contains("formation_index") && params.contains("select_formation")) {
+        Log.warn("================  DEPRECATED  ================");
+        Log.warn("`select_formation` has been deprecated since v5.23.3; Please use 'formation_index'");
+        Log.warn("================  DEPRECATED  ================");
+        formation_index = params.get("select_formation", 0);
     }
+
+    if (!m_credit_fight_task_ptr->set_params(formation_index)) {
+        return false;
+    }
+    // ————————————————————————————————————————————————————————————————
 
     return true;
 }

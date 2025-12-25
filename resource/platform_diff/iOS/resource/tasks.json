@@ -1,9 +1,24 @@
 {
+    "AccountManagerOfficial": {
+        "roi": [590, 226, 102, 58]
+    },
+    "Logout": {
+        "roi": [660, 432, 100, 32]
+    },
+    "LogoutConfirm": {
+        "roi": [670, 436, 132, 36]
+    },
     "VisitNextBlack": {
         "templThreshold": 0.9
     },
     "SSSDrawCard": {
         "templThreshold": 0.97
+    },
+    "InfrastControl": {
+        "templThreshold": 0.85
+    },
+    "InfrastControlMini": {
+        "templThreshold": 0.85
     },
     "InfrastSmileyOnRest": {
         "templThreshold": 0.7
@@ -19,5 +34,14 @@
     },
     "Mizuki@Roguelike@MissionFailedFlag": {
         "templThreshold": 0.75
+    },
+    "Sarkaz@Roguelike@ChooseBurdenOperatorAtStart": {
+        "templThreshold": 0.7
+    },
+    "Sarkaz@Roguelike@DecreaseBurdenAbandonThought": {
+        "templThreshold": 0.9
+    },
+    "Sarkaz@Roguelike@StageRefresh": {
+        "templThreshold": 0.7
     }
 }

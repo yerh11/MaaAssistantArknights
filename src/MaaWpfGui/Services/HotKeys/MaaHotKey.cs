@@ -1,6 +1,6 @@
 // <copyright file="MaaHotKey.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -15,46 +15,45 @@ using System.Text;
 using System.Windows.Input;
 using GlobalHotKey;
 
-namespace MaaWpfGui.Services.HotKeys
+namespace MaaWpfGui.Services.HotKeys;
+
+public class MaaHotKey : HotKey
 {
-    public class MaaHotKey : HotKey
+    public MaaHotKey()
     {
-        public MaaHotKey()
+    }
+
+    public MaaHotKey(Key key, ModifierKeys modifiers)
+        : base(key, modifiers)
+    {
+    }
+
+    public override string ToString()
+    {
+        var str = new StringBuilder();
+
+        if (Modifiers.HasFlag(ModifierKeys.Control))
         {
+            str.Append("Ctrl + ");
         }
 
-        public MaaHotKey(Key key, ModifierKeys modifiers)
-            : base(key, modifiers)
+        if (Modifiers.HasFlag(ModifierKeys.Shift))
         {
+            str.Append("Shift + ");
         }
 
-        public override string ToString()
+        if (Modifiers.HasFlag(ModifierKeys.Alt))
         {
-            var str = new StringBuilder();
-
-            if (Modifiers.HasFlag(ModifierKeys.Control))
-            {
-                str.Append("Ctrl + ");
-            }
-
-            if (Modifiers.HasFlag(ModifierKeys.Shift))
-            {
-                str.Append("Shift + ");
-            }
-
-            if (Modifiers.HasFlag(ModifierKeys.Alt))
-            {
-                str.Append("Alt + ");
-            }
-
-            if (Modifiers.HasFlag(ModifierKeys.Windows))
-            {
-                str.Append("Win + ");
-            }
-
-            str.Append(Key);
-
-            return str.ToString();
+            str.Append("Alt + ");
         }
+
+        if (Modifiers.HasFlag(ModifierKeys.Windows))
+        {
+            str.Append("Win + ");
+        }
+
+        str.Append(Key);
+
+        return str.ToString();
     }
 }

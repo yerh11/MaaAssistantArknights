@@ -1,8 +1,8 @@
 #include "Assistant.h"
 
-#include "Utils/NoWarningCV.h"
-#include "Utils/Ranges.hpp"
+#include "MaaUtils/NoWarningCV.hpp"
 #include <meojson/json.hpp>
+#include <ranges>
 
 #include "Config/GeneralConfig.h"
 #include "Config/Miscellaneous/OcrPack.h"
@@ -59,7 +59,9 @@ bool ::AsstExtAPI::set_static_option(StaticOptionKey key, const std::string& val
     return false;
 }
 
-Assistant::Assistant(ApiCallback callback, void* callback_arg) : m_callback(callback), m_callback_arg(callback_arg)
+Assistant::Assistant(ApiCallback callback, void* callback_arg) :
+    m_callback(callback),
+    m_callback_arg(callback_arg)
 {
     LogTraceFunction;
 
@@ -218,7 +220,8 @@ asst::Assistant::TaskId asst::Assistant::append_task(const std::string& type, co
         ptr = std::make_shared<TASK>(append_callback_for_inst, this); \
     }
 
-    if constexpr (false) {}
+    if constexpr (false) {
+    }
     ASST_ASSISTANT_APPEND_TASK_FROM_STRING_IF_BRANCH(FightTask)
     ASST_ASSISTANT_APPEND_TASK_FROM_STRING_IF_BRANCH(StartUpTask)
     ASST_ASSISTANT_APPEND_TASK_FROM_STRING_IF_BRANCH(CloseDownTask)
@@ -304,6 +307,22 @@ std::vector<uchar> asst::Assistant::get_image() const
     return buf;
 }
 
+std::vector<uchar> asst::Assistant::get_image_bgr() const
+{
+    if (!inited()) {
+        return {};
+    }
+
+    cv::Mat img = m_ctrler->get_image_cache();
+
+    if (!img.isContinuous()) {
+        img = img.clone();
+    }
+
+    std::vector<uchar> buf(img.data, img.data + img.total() * img.elemSize());
+    return buf;
+}
+
 bool asst::Assistant::connect(const std::string& adb_path, const std::string& address, const std::string& config)
 {
     LogTraceFunction;
@@ -311,14 +330,18 @@ bool asst::Assistant::connect(const std::string& adb_path, const std::string& ad
     return ctrl_connect(adb_path, address, config);
 }
 
-asst::Assistant::AsyncCallId asst::Assistant::async_connect(const std::string& adb_path, const std::string& address,
-                                                            const std::string& config, bool block)
+asst::Assistant::AsyncCallId asst::Assistant::async_connect(
+    const std::string& adb_path,
+    const std::string& address,
+    const std::string& config,
+    bool block)
 {
     LogTraceFunction;
 
     return append_async_call(
         AsyncCallItem::Type::Connect,
-        AsyncCallItem::ConnectParams { .adb_path = adb_path, .address = address, .config = config }, block);
+        AsyncCallItem::ConnectParams { .adb_path = adb_path, .address = address, .config = config },
+        block);
 }
 
 asst::Assistant::AsyncCallId asst::Assistant::async_click(int x, int y, bool block)
@@ -349,7 +372,7 @@ std::vector<Assistant::TaskId> asst::Assistant::get_tasks_list() const
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     std::vector<TaskId> result(m_tasks_list.size());
-    ranges::copy(m_tasks_list | views::keys, result.begin());
+    std::ranges::copy(m_tasks_list | std::views::keys, result.begin());
     return result;
 }
 
@@ -486,8 +509,8 @@ void Assistant::msg_proc()
     }
 }
 
-asst::Assistant::AsyncCallId asst::Assistant::append_async_call(AsyncCallItem::Type type, AsyncCallItem::Parmas params,
-                                                                bool block)
+asst::Assistant::AsyncCallId
+    asst::Assistant::append_async_call(AsyncCallItem::Type type, AsyncCallItem::Parmas params, bool block)
 {
     LogTraceFunction;
 

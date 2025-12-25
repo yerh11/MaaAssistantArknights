@@ -3,7 +3,6 @@
 #include "Config/Roguelike/RoguelikeRecruitConfig.h"
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
-#include "Status.h"
 #include "Utils/Logger.hpp"
 #include "Vision/Roguelike/RoguelikeSkillSelectionImageAnalyzer.h"
 
@@ -67,22 +66,22 @@ bool asst::RoguelikeSkillSelectionTaskPlugin::_run()
         }
     }
 
-    if (m_config->get_oper().empty()) {
+    if (m_config->status().opers.empty()) {
         std::unordered_map<std::string, RoguelikeOper> opers;
         for (const auto& [name, skill_vec] : analyzer.get_result()) {
             opers[name] = { .elite = 1, .level = 80 };
             // 不知道是啥等级随便填一个
         }
-        m_config->set_oper(std::move(opers));
+        m_config->status().opers = std::move(opers);
     }
 
     if (analyzer.get_team_full() && !has_rookie) {
         Log.info("Team full and no rookie");
-        m_config->set_team_full_without_rookie(true);
+        m_config->status().team_full_without_rookie = true;
     }
     else {
         Log.info("Team not full or has rookie");
-        m_config->set_team_full_without_rookie(false);
+        m_config->status().team_full_without_rookie = false;
     }
     return true;
 }

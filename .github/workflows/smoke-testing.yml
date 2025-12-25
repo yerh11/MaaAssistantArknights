@@ -1,78 +1,140 @@
-name: test
+name: Smoke Test
+permissions:
+  contents: read
 
 on:
   push:
     paths:
+      - ".github/workflows/smoke-testing.yml"
       - "3rdparty/include/**"
-      - "include/**"
-      - "src/**"
       - "cmake/**"
       - "CMakeLists.txt"
-      - "MAA.sln"
+      - "include/**"
       - "resource/**"
-      - "MaaDeps/**"
+      - "src/Cpp/**"
+      - "src/MaaCore/**"
+      - "tools/maadeps-download.py"
+      - "tools/SmokeTesting/**"
       - "!**/*.md"
   pull_request:
     paths:
+      - ".github/workflows/smoke-testing.yml"
       - "3rdparty/include/**"
-      - "include/**"
-      - "src/**"
       - "cmake/**"
       - "CMakeLists.txt"
-      - "MAA.sln"
+      - "include/**"
       - "resource/**"
-      - "MaaDeps/**"
+      - "src/Cpp/**"
+      - "src/MaaCore/**"
+      - "tools/maadeps-download.py"
+      - "tools/SmokeTesting/**"
       - "!**/*.md"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/dev' && github.sha }}
+  cancel-in-progress: true
+
 jobs:
   smoke-testing:
-    runs-on: windows-latest
+    name: Run Smoke Test
+    runs-on: macos-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
           show-progress: false
-          submodules: recursive
-          
-      - name: Restore dependencies
-        run: dotnet restore
-      
+
+      - name: Generate cache key
+        id: cache_key
+        continue-on-error: true
+        run: |
+          echo "key=Smoke-testing-${{ hashFiles('src/Cpp/**', 'src/MaaCore/**', '3rdparty/include/**', 'include/**', 'cmake/**', 'CMakeLists.txt', 'tools/maadeps-download.py', 'tools/linux-toolchain-download.py') }}" >> $GITHUB_OUTPUT
+
+      - name: Restore cache for Smoke Test
+        if: ${{ steps.cache_key.outputs.key != '' }}
+        id: smoke-cache
+        uses: actions/cache/restore@v5
+        continue-on-error: true
+        with:
+          key: ${{ steps.cache_key.outputs.key }}
+          path: |
+            ./install/libfastdeploy_ppocr.dylib
+            ./install/libMaaCore.dylib
+            ./install/libMaaUtils.dylib
+            ./install/libonnxruntime.1.19.2.dylib
+            ./install/libopencv_world4.4.11.0.dylib
+            ./install/smoke_test
+
+      - name: Fetch submodules
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init --depth 1 src/MaaUtils
+
+      - name: Cache MaaDeps
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        id: maadeps-cache
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ./src/MaaUtils/MaaDeps
+          key: ${{ runner.os }}-arm64-maadeps-${{ hashFiles('tools/maadeps-download.py') }}
+
       - name: Bootstrap MaaDeps
+        if: steps.smoke-cache.outputs.cache-hit != 'true' && steps.maadeps-cache.outputs.cache-hit != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 maadeps-download.py x64-windows
+          python3 tools/maadeps-download.py arm64-osx
 
-      - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v1
-      - name: Build MaaSample
+      - name: Config cmake
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
         run: |
-          MSBUILD src/Cpp/MaaSample.slnf /t:rebuild /p:Configuration="Debug" /p:Platform="x64" /m
+          mkdir -p build
+          cmake -B build -GNinja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DMAADEPS_TRIPLET='maa-arm64-osx' \
+            -DBUILD_SMOKE_TEST=ON \
+            -DINSTALL_RESOURCE=ON \
+            -DWITH_HASH_VERSION=ON
 
-      - name: Run tests - Official #用来判断是不是国服资源出错导致外服全炸
+      - name: Build
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
         run: |
-          .\x64\Debug\Sample.exe
+          cmake --build build --config Debug --parallel $(sysctl -n hw.logicalcpu)
 
-      - name: Run tests - YoStarJP
+      - name: Install
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
         run: |
-          .\x64\Debug\Sample.exe YoStarJP
-          
-      - name: Run tests - YoStarEN
+          mkdir -p install
+          cmake --install build --prefix install --config Debug
+
+      - name: Make link to Smoke Test cache
+        if: steps.smoke-cache.outputs.cache-hit == 'true'
         run: |
-          .\x64\Debug\Sample.exe YoStarEN
-        
-      - name: Run tests - YoStarKR
+          ln -s "$(pwd)/resource" install/resource
+
+      - name: Run tests
         run: |
-          .\x64\Debug\Sample.exe YoStarKR
-        
-      - name: Run tests - txwy
-        run: |
-          .\x64\Debug\Sample.exe txwy
+          sh ./tools/SmokeTesting/run_tests.sh
+
+      - name: Save cache for Smoke Test (only in dev)
+        if: steps.smoke-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          key: ${{ steps.cache_key.outputs.key }}
+          path: |
+            ./install/libfastdeploy_ppocr.dylib
+            ./install/libMaaUtils.dylib
+            ./install/libMaaCore.dylib
+            ./install/libonnxruntime.1.19.2.dylib
+            ./install/libopencv_world4.4.11.0.dylib
+            ./install/smoke_test
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: log
-          path: .\x64\Debug\debug
+          name: logs
+          path: ./install/debug

@@ -1,6 +1,6 @@
 #include "InfrastDormTask.h"
 
-#include <regex>
+#include <boost/regex.hpp>
 
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
@@ -8,7 +8,6 @@
 #include "Utils/Logger.hpp"
 #include "Vision/Infrast/InfrastOperImageAnalyzer.h"
 #include "Vision/Matcher.h"
-#include "Vision/OCRer.h"
 #include "Vision/RegionOCRer.h"
 
 asst::InfrastDormTask& asst::InfrastDormTask::set_notstationed_enabled(bool dorm_notstationed_enabled) noexcept
@@ -23,6 +22,12 @@ asst::InfrastDormTask& asst::InfrastDormTask::set_trust_enabled(bool dorm_trust_
     return *this;
 }
 
+bool asst::InfrastDormTask::on_run_fails()
+{
+    m_if_filter_notstationed_haspressed = false;
+    return asst::InfrastAbstractTask::on_run_fails();
+}
+
 bool asst::InfrastDormTask::_run()
 {
     for (; m_cur_facility_index < m_max_num_of_dorm; ++m_cur_facility_index) {
@@ -33,12 +38,28 @@ bool asst::InfrastDormTask::_run()
             Log.info("skip this room");
             continue;
         }
+
         // 进不去说明设施数量不够
         if (!enter_facility(m_cur_facility_index)) {
-            break;
+            swipe_to_the_left_of_main_ui();
+            if (!enter_facility(m_cur_facility_index)) {
+                break;
+            }
         }
         if (!enter_oper_list_page()) {
             return false;
+        }
+
+        close_quick_formation_expand_role();
+
+        // EDIT: 25.7.17 把未进驻的筛选移到了清空之前，看看会不会有问题
+        // 按原来的逻辑先清空再筛选的话，会把第一个宿舍的人隐藏，假设当前只有 20 个人需要回复心情
+        // 会导致第宿舍全塞入信赖干员，使得 5 人最后不能休息
+        Log.trace("m_dorm_notstationed_enabled:", m_dorm_notstationed_enabled);
+        if (m_dorm_notstationed_enabled && !m_if_filter_notstationed_haspressed) {
+            Log.trace("click_filter_menu_not_stationed_button");
+            click_filter_menu_not_stationed_button();
+            m_if_filter_notstationed_haspressed = true;
         }
 
         auto origin_room_config = current_room_config();
@@ -47,13 +68,6 @@ bool asst::InfrastDormTask::_run()
         }
         else {
             click_clear_button(); // 宿舍若未指定干员，则清空后按照原约定逻辑选择干员
-        }
-
-        Log.trace("m_dorm_notstationed_enabled:", m_dorm_notstationed_enabled);
-        if (m_dorm_notstationed_enabled && !m_if_filter_notstationed_haspressed) {
-            Log.trace("click_filter_menu_not_stationed_button");
-            click_filter_menu_not_stationed_button();
-            m_if_filter_notstationed_haspressed = true;
         }
 
         if (!m_is_custom || current_room_config().autofill) {
@@ -123,8 +137,11 @@ bool asst::InfrastDormTask::opers_choose(asst::infrast::CustomRoomConfig const& 
                 if (m_next_step == NextStep::Fill) {
                     to_fill = true;
                     Log.info("set to_fill = true;");
-                    ctrler()->click(oper.rect);
-                    ++num_of_selected;
+                    if (oper.doing != infrast::Doing::Working && !oper.selected) {
+                        Log.info("to fill");
+                        ctrler()->click(oper.rect);
+                        ++num_of_selected;
+                    }
                     continue;
                 }
                 // 如果所有心情不满的干员已经放入宿舍，就把信赖不满的干员放入宿舍
@@ -138,8 +155,8 @@ bool asst::InfrastDormTask::opers_choose(asst::infrast::CustomRoomConfig const& 
                     }
 
                     std::string opertrust = trust_analyzer.get_result().text;
-                    std::regex rule("[^0-9]"); // 只保留数字
-                    opertrust = std::regex_replace(opertrust, rule, "");
+                    boost::regex rule("[^0-9]"); // 只保留数字
+                    opertrust = boost::regex_replace(opertrust, rule, "");
                     Log.trace("opertrust:", opertrust);
 
                     bool if_opertrust_not_full = false;
@@ -171,8 +188,8 @@ bool asst::InfrastDormTask::opers_choose(asst::infrast::CustomRoomConfig const& 
                     }
 
                     std::string facilityname = facility_analyzer.get_result().text;
-                    std::regex rule2("[^BF0-9]"); // 只保留B、F和数字
-                    facilityname = std::regex_replace(facilityname, rule2, "");
+                    boost::regex rule2("[^BF0-9]"); // 只保留B、F和数字
+                    facilityname = boost::regex_replace(facilityname, rule2, "");
 
                     Log.trace("facilityname:<" + facilityname + ">");
                     bool if_oper_not_stationed = facilityname.length() < 4; // 只有形如1F01或B101才是设施标签

@@ -1,6 +1,6 @@
 // <copyright file="MessageBoxHelper.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -10,315 +10,318 @@
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY
 // </copyright>
+
+#nullable enable
+
 #pragma warning disable CS0618
 #pragma warning disable SA1401
 
 using System;
-using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Windows;
+using System.Windows.Forms;
 using HandyControl.Data;
-using Vanara.PInvoke;
+using MaaWpfGui.Constants;
 
 [assembly: SecurityCritical]
 [assembly: SecurityTreatAsSafe]
 
-namespace MaaWpfGui.Helper
+namespace MaaWpfGui.Helper;
+
+/// <summary>
+/// 消息框弹窗格式管理
+/// </summary>
+public static class MessageBoxHelper
 {
     /// <summary>
-    /// 消息框弹窗格式管理
+    /// OK text
     /// </summary>
-    public static class MessageBoxHelper
+    // ReSharper disable once InconsistentNaming
+    public static string OK = "OK";
+
+    /// <summary>
+    /// Cancel text
+    /// </summary>
+    public static string Cancel = "Cancel";
+
+    /// <summary>
+    /// Abort text
+    /// </summary>
+    public static string Abort = "Abort";
+
+    /// <summary>
+    /// Retry text
+    /// </summary>
+    public static string Retry = "Retry";
+
+    /// <summary>
+    /// Ignore text
+    /// </summary>
+    public static string Ignore = "Ignore";
+
+    /// <summary>
+    /// Yes text
+    /// </summary>
+    public static string Yes = "Yes";
+
+    /// <summary>
+    /// No text
+    /// </summary>
+    public static string No = "No";
+
+    private static void SetImage(MessageBoxImage messageBoxImage, ref string iconKey, ref string iconBrushKey)
     {
-        /// <summary>
-        /// OK text
-        /// </summary>
-        // ReSharper disable once InconsistentNaming
-        public static string OK = "OK";
+        var key = string.Empty;
+        var brushKey = string.Empty;
 
-        /// <summary>
-        /// Cancel text
-        /// </summary>
-        public static string Cancel = "Cancel";
-
-        /// <summary>
-        /// Abort text
-        /// </summary>
-        public static string Abort = "Abort";
-
-        /// <summary>
-        /// Retry text
-        /// </summary>
-        public static string Retry = "Retry";
-
-        /// <summary>
-        /// Ignore text
-        /// </summary>
-        public static string Ignore = "Ignore";
-
-        /// <summary>
-        /// Yes text
-        /// </summary>
-        public static string Yes = "Yes";
-
-        /// <summary>
-        /// No text
-        /// </summary>
-        public static string No = "No";
-
-        private static void SetImage(MessageBoxImage messageBoxImage, ref string iconKey, ref string iconBrushKey)
+        switch (messageBoxImage)
         {
-            var key = string.Empty;
-            var brushKey = string.Empty;
+            case MessageBoxImage.Question:
+                key = ResourceToken.AskGeometry;
+                brushKey = ResourceToken.AccentBrush;
+                break;
 
-            switch (messageBoxImage)
-            {
-                case MessageBoxImage.Question:
-                    key = ResourceToken.AskGeometry;
-                    brushKey = ResourceToken.AccentBrush;
-                    break;
+            case MessageBoxImage.Error:
+                key = ResourceToken.ErrorGeometry;
+                brushKey = ResourceToken.DangerBrush;
+                break;
 
-                case MessageBoxImage.Error:
-                    key = ResourceToken.ErrorGeometry;
-                    brushKey = ResourceToken.DangerBrush;
-                    break;
+            case MessageBoxImage.Warning:
+                key = ResourceToken.WarningGeometry;
+                brushKey = ResourceToken.WarningBrush;
+                break;
 
-                case MessageBoxImage.Warning:
-                    key = ResourceToken.WarningGeometry;
-                    brushKey = ResourceToken.WarningBrush;
-                    break;
-
-                case MessageBoxImage.Information:
-                    key = ResourceToken.InfoGeometry;
-                    brushKey = ResourceToken.InfoBrush;
-                    break;
-            }
-
-            iconKey = string.IsNullOrEmpty(iconKey) ? key : iconKey;
-            iconBrushKey = string.IsNullOrEmpty(iconBrushKey) ? brushKey : iconBrushKey;
+            case MessageBoxImage.Information:
+                key = ResourceToken.InfoGeometry;
+                brushKey = ResourceToken.InfoBrush;
+                break;
         }
 
-        public static MessageBoxResult Show(MessageBoxInfo info) => HandyControl.Controls.MessageBox.Show(info);
+        iconKey = string.IsNullOrEmpty(iconKey) ? key : iconKey;
+        iconBrushKey = string.IsNullOrEmpty(iconBrushKey) ? brushKey : iconBrushKey;
+    }
 
-        public static MessageBoxResult Show(
-            string messageBoxText,
-            string caption = "",
-            MessageBoxButton buttons = MessageBoxButton.OK,
-            MessageBoxImage icon = MessageBoxImage.None,
-            string iconKey = "",
-            string iconBrushKey = "",
-            string ok = "",
-            string cancel = "",
-            string yes = "",
-            string no = "",
-            bool useNativeMethod = false) => Show(WindowHandle.None, messageBoxText, caption, buttons, icon, iconKey, iconBrushKey, ok, cancel, yes, no, useNativeMethod);
+    public static MessageBoxResult Show(MessageBoxInfo info) => HandyControl.Controls.MessageBox.Show(info);
 
-        public static MessageBoxResult Show(
-            WindowHandle ownerWindow,
-            string messageBoxText,
-            string caption = "",
-            MessageBoxButton buttons = MessageBoxButton.OK,
-            MessageBoxImage icon = MessageBoxImage.None,
-            string iconKey = "",
-            string iconBrushKey = "",
-            string ok = "",
-            string cancel = "",
-            string yes = "",
-            string no = "",
-            bool useNativeMethod = false)
+    public static MessageBoxResult Show(
+        string messageBoxText,
+        string caption = "",
+        MessageBoxButton buttons = MessageBoxButton.OK,
+        MessageBoxImage icon = MessageBoxImage.None,
+        string iconKey = "",
+        string iconBrushKey = "",
+        string ok = "",
+        string cancel = "",
+        string yes = "",
+        string no = "",
+        bool useNativeMethod = false) => Show(WindowHandle.None, messageBoxText, caption, buttons, icon, iconKey, iconBrushKey, ok, cancel, yes, no, useNativeMethod);
+
+    public static MessageBoxResult Show(
+        WindowHandle ownerWindow,
+        string messageBoxText,
+        string caption = "",
+        MessageBoxButton buttons = MessageBoxButton.OK,
+        MessageBoxImage icon = MessageBoxImage.None,
+        string iconKey = "",
+        string iconBrushKey = "",
+        string ok = "",
+        string cancel = "",
+        string yes = "",
+        string no = "",
+        bool useNativeMethod = false)
+    {
+        caption = string.IsNullOrEmpty(caption) ? LocalizationHelper.GetString("Tip") : caption;
+        ok = string.IsNullOrEmpty(ok) ? LocalizationHelper.GetString("Ok") : ok;
+        cancel = string.IsNullOrEmpty(cancel) ? LocalizationHelper.GetString("ManualRestart") : cancel;
+        yes = string.IsNullOrEmpty(yes) ? LocalizationHelper.GetString("Yes") : yes;
+        no = string.IsNullOrEmpty(no) ? LocalizationHelper.GetString("No") : no;
+
+        if (useNativeMethod)
         {
-            caption = string.IsNullOrEmpty(caption) ? LocalizationHelper.GetString("Tip") : caption;
-            ok = string.IsNullOrEmpty(ok) ? LocalizationHelper.GetString("Ok") : ok;
-            cancel = string.IsNullOrEmpty(cancel) ? LocalizationHelper.GetString("ManualRestart") : cancel;
-            yes = string.IsNullOrEmpty(yes) ? LocalizationHelper.GetString("Yes") : yes;
-            no = string.IsNullOrEmpty(no) ? LocalizationHelper.GetString("No") : no;
-
-            if (useNativeMethod)
-            {
-                return ShowNative(ownerWindow, messageBoxText, null, caption, buttons, icon, MessageBoxResult.None, false, ok, cancel, yes, no);
-            }
-            else
-            {
-                SetImage(icon, ref iconKey, ref iconBrushKey);
-                var info = new MessageBoxInfo
-                {
-                    Message = messageBoxText,
-                    Caption = caption,
-                    Button = buttons,
-                    IconKey = iconKey,
-                    IconBrushKey = iconBrushKey,
-                    ConfirmContent = ok,
-                    CancelContent = cancel,
-                    YesContent = yes,
-                    NoContent = no,
-                };
-                return HandyControl.Controls.MessageBox.Show(info);
-            }
+            return ShowNative(ownerWindow, messageBoxText, string.Empty, caption, buttons, icon, false, ok, cancel, yes, no);
         }
-
-        public static MessageBoxResult ShowNative(
-           WindowHandle ownerWindow,
-           string messageBoxText,
-           string mainInstruction = "",
-           string windowTitle = "",
-           MessageBoxButton buttons = MessageBoxButton.OK,
-           MessageBoxImage icon = MessageBoxImage.None,
-           MessageBoxResult defaultButton = MessageBoxResult.None,
-           bool alwaysAllowCancel = false,
-           string ok = "",
-           string cancel = "",
-           string yes = "",
-           string no = "")
+        else
         {
-            var config = new ComCtl32.TASKDIALOGCONFIG()
+            SetImage(icon, ref iconKey, ref iconBrushKey);
+            var info = new MessageBoxInfo
             {
-                Content = messageBoxText,
-                MainInstruction = mainInstruction,
-                WindowTitle = windowTitle,
-                hwndParent = ownerWindow.Handle,
-                nDefaultButton = (int)defaultButton,
-                dwFlags = ComCtl32.TASKDIALOG_FLAGS.TDF_POSITION_RELATIVE_TO_WINDOW | ComCtl32.TASKDIALOG_FLAGS.TDF_SIZE_TO_CONTENT,
+                Message = messageBoxText,
+                Caption = caption,
+                Button = buttons,
+                IconKey = iconKey,
+                IconBrushKey = iconBrushKey,
+                ConfirmContent = ok,
+                CancelContent = cancel,
+                YesContent = yes,
+                NoContent = no,
             };
 
-            if (alwaysAllowCancel)
+            DateTime startTime = DateTime.Now;
+
+            var result = HandyControl.Controls.MessageBox.Show(info);
+
+            var duration = DateTime.Now - startTime;
+            if (duration.TotalSeconds <= 1)
             {
-                config.dwFlags |= ComCtl32.TASKDIALOG_FLAGS.TDF_ALLOW_DIALOG_CANCELLATION;
+                AchievementTrackerHelper.Instance.Unlock(AchievementIds.QuickCloser);
             }
 
-            switch (icon)
-            {
-                case MessageBoxImage.Information:
-                    // case MessageBoxImage.Asterisk:
-                    config.mainIcon = (IntPtr)ComCtl32.TaskDialogIcon.TD_INFORMATION_ICON;
-                    break;
-                case MessageBoxImage.Hand:
-                    // case MessageBoxImage.Stop:
-                    // case MessageBoxImage.Error
-                    config.mainIcon = (IntPtr)ComCtl32.TaskDialogIcon.TD_ERROR_ICON;
-                    break;
-                case MessageBoxImage.Exclamation:
-                    // case MessageBoxImage.Warning:
-                    config.mainIcon = (IntPtr)ComCtl32.TaskDialogIcon.TD_WARNING_ICON;
-                    break;
-                case MessageBoxImage.Question:
-                    var iconInfo = new Shell32.SHSTOCKICONINFO { cbSize = (uint)Marshal.SizeOf<Shell32.SHSTOCKICONINFO>() };
-                    Shell32.SHGetStockIconInfo(Shell32.SHSTOCKICONID.SIID_HELP, Shell32.SHGSI.SHGSI_ICON, ref iconInfo).ThrowIfFailed();
-                    config.mainIcon = iconInfo.hIcon.DangerousGetHandle();
-                    config.dwFlags |= ComCtl32.TASKDIALOG_FLAGS.TDF_USE_HICON_MAIN;
-                    break;
-                case MessageBoxImage.None:
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(icon), icon, null);
-            }
-
-            bool hasOk = false, hasCancel = false, hasYes = false, hasNo = false;
-            var customButtons = new List<ComCtl32.TASKDIALOG_BUTTON>();
-            var gcHandles = new List<GCHandle>();
-            switch (buttons)
-            {
-                case MessageBoxButton.OK:
-                    hasOk = true;
-                    break;
-                case MessageBoxButton.OKCancel:
-                    hasOk = true;
-                    hasCancel = true;
-                    break;
-                case MessageBoxButton.YesNoCancel:
-                    hasYes = true;
-                    hasNo = true;
-                    hasCancel = true;
-                    break;
-                case MessageBoxButton.YesNo:
-                    hasYes = true;
-                    hasNo = true;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(buttons), buttons, null);
-            }
-
-            if (hasOk)
-            {
-                if (string.IsNullOrEmpty(ok))
-                {
-                    config.dwCommonButtons |= ComCtl32.TASKDIALOG_COMMON_BUTTON_FLAGS.TDCBF_OK_BUTTON;
-                }
-                else
-                {
-                    var gch = GCHandle.Alloc(ok, GCHandleType.Pinned);
-                    gcHandles.Add(gch);
-                    customButtons.Add(new ComCtl32.TASKDIALOG_BUTTON { nButtonID = (int)User32.MB_RESULT.IDOK, pszButtonText = gch.AddrOfPinnedObject() });
-                }
-            }
-
-            if (hasCancel)
-            {
-                if (string.IsNullOrEmpty(cancel))
-                {
-                    config.dwCommonButtons |= ComCtl32.TASKDIALOG_COMMON_BUTTON_FLAGS.TDCBF_CANCEL_BUTTON;
-                }
-                else
-                {
-                    var gch = GCHandle.Alloc(cancel, GCHandleType.Pinned);
-                    gcHandles.Add(gch);
-                    customButtons.Add(new ComCtl32.TASKDIALOG_BUTTON { nButtonID = (int)User32.MB_RESULT.IDCANCEL, pszButtonText = gch.AddrOfPinnedObject() });
-                }
-            }
-
-            if (hasYes)
-            {
-                if (string.IsNullOrEmpty(yes))
-                {
-                    config.dwCommonButtons |= ComCtl32.TASKDIALOG_COMMON_BUTTON_FLAGS.TDCBF_YES_BUTTON;
-                }
-                else
-                {
-                    var gch = GCHandle.Alloc(yes, GCHandleType.Pinned);
-                    gcHandles.Add(gch);
-                    customButtons.Add(new ComCtl32.TASKDIALOG_BUTTON { nButtonID = (int)User32.MB_RESULT.IDYES, pszButtonText = gch.AddrOfPinnedObject() });
-                }
-            }
-
-            if (hasNo)
-            {
-                if (string.IsNullOrEmpty(no))
-                {
-                    config.dwCommonButtons |= ComCtl32.TASKDIALOG_COMMON_BUTTON_FLAGS.TDCBF_NO_BUTTON;
-                }
-                else
-                {
-                    var gch = GCHandle.Alloc(no, GCHandleType.Pinned);
-                    gcHandles.Add(gch);
-                    customButtons.Add(new ComCtl32.TASKDIALOG_BUTTON { nButtonID = (int)User32.MB_RESULT.IDNO, pszButtonText = gch.AddrOfPinnedObject() });
-                }
-            }
-
-            if (customButtons.Count != 0)
-            {
-                var array = customButtons.ToArray();
-                var gch = GCHandle.Alloc(array, GCHandleType.Pinned);
-                gcHandles.Add(gch);
-                config.pButtons = gch.AddrOfPinnedObject();
-                config.cButtons = (uint)customButtons.Count;
-            }
-
-            ComCtl32.TaskDialogIndirect(config, out var button, out _, out _).ThrowIfFailed();
-
-            foreach (var h in gcHandles)
-            {
-                h.Free();
-            }
-
-            return button switch
-            {
-                (int)User32.MB_RESULT.IDOK => MessageBoxResult.OK,
-                (int)User32.MB_RESULT.IDYES => MessageBoxResult.Yes,
-                (int)User32.MB_RESULT.IDNO => MessageBoxResult.No,
-                (int)User32.MB_RESULT.IDCANCEL => MessageBoxResult.Cancel,
-                0 => MessageBoxResult.None,
-                _ => (MessageBoxResult)button,
-            };
+            return result;
         }
+    }
+
+    private unsafe readonly ref struct DisposablePin<T>
+        where T : unmanaged
+    {
+        private readonly GCHandle _handle;
+
+        public DisposablePin(object obj)
+        {
+            _handle = GCHandle.Alloc(obj, GCHandleType.Pinned);
+        }
+
+        public T* AddrOfPinnedObject => (T*)_handle.AddrOfPinnedObject();
+
+        public void Dispose()
+        {
+            _handle.Free();
+        }
+    }
+
+    public static MessageBoxResult ShowNative(
+       WindowHandle ownerWindow,
+       string messageBoxText,
+       string mainInstruction = "",
+       string windowTitle = "",
+       MessageBoxButton buttons = MessageBoxButton.OK,
+       MessageBoxImage icon = MessageBoxImage.None,
+       bool alwaysAllowCancel = false,
+       string ok = "",
+       string cancel = "",
+       string yes = "",
+       string no = "")
+    {
+        using var contentPin = new DisposablePin<char>(messageBoxText);
+        using var instructionPin = new DisposablePin<char>(mainInstruction);
+        using var titlePin = new DisposablePin<char>(windowTitle);
+
+        // Use TaskDialogPage / TaskDialog.ShowDialog to display native-style dialog page
+        var page = new TaskDialogPage
+        {
+            Caption = windowTitle,
+            Heading = mainInstruction,
+            Text = messageBoxText,
+            SizeToContent = true,
+        };
+
+        // Icon
+        switch (icon)
+        {
+            case MessageBoxImage.Information:
+                page.Icon = TaskDialogIcon.Information;
+                break;
+            case MessageBoxImage.Hand:
+                page.Icon = TaskDialogIcon.Error;
+                break;
+            case MessageBoxImage.Exclamation:
+                page.Icon = TaskDialogIcon.Warning;
+                break;
+            case MessageBoxImage.Question:
+                page.Icon = TaskDialogIcon.Shield;
+                break;
+            case MessageBoxImage.None:
+                page.Icon = TaskDialogIcon.None;
+                break;
+        }
+
+        // Buttons
+        switch (buttons)
+        {
+            case MessageBoxButton.OK:
+                page.Buttons.Add(TaskDialogButton.OK);
+                break;
+            case MessageBoxButton.OKCancel:
+                page.Buttons.Add(TaskDialogButton.OK);
+                page.Buttons.Add(TaskDialogButton.Cancel);
+                break;
+            case MessageBoxButton.YesNo:
+                page.Buttons.Add(TaskDialogButton.Yes);
+                page.Buttons.Add(TaskDialogButton.No);
+                break;
+            case MessageBoxButton.YesNoCancel:
+                page.Buttons.Add(TaskDialogButton.Yes);
+                page.Buttons.Add(TaskDialogButton.No);
+                page.Buttons.Add(TaskDialogButton.Cancel);
+                break;
+        }
+
+        // Custom labels
+        if (!string.IsNullOrEmpty(ok))
+        {
+            page.Buttons[0].Text = ok;
+        }
+
+        if (!string.IsNullOrEmpty(cancel))
+        {
+            page.Buttons.FirstOrDefault(b => b == System.Windows.Forms.TaskDialogButton.Cancel)?.Text = cancel;
+        }
+
+        if (!string.IsNullOrEmpty(yes))
+        {
+            page.Buttons.FirstOrDefault(b => b == TaskDialogButton.Yes)?.Text = yes;
+        }
+
+        if (!string.IsNullOrEmpty(no))
+        {
+            page.Buttons.FirstOrDefault(b => b == TaskDialogButton.No)?.Text = no;
+        }
+
+        // Allow cancel
+        if (alwaysAllowCancel)
+        {
+            page.AllowCancel = true;
+        }
+
+        // Owner window
+        IWin32Window? owner = null;
+        if (ownerWindow.Handle != IntPtr.Zero)
+        {
+            owner = new WpfWin32Window(System.Windows.Application.Current?.MainWindow ?? new Window());
+        }
+        else if (System.Windows.Application.Current?.MainWindow != null)
+        {
+            owner = new WpfWin32Window(System.Windows.Application.Current.MainWindow);
+        }
+
+        // Show dialog
+        var tdResult = owner != null ? TaskDialog.ShowDialog(owner, page) : TaskDialog.ShowDialog(page);
+
+        if (tdResult == TaskDialogButton.OK)
+        {
+            return MessageBoxResult.OK;
+        }
+        else if (tdResult == TaskDialogButton.Cancel)
+        {
+            return MessageBoxResult.Cancel;
+        }
+        else if (tdResult == TaskDialogButton.Yes)
+        {
+            return MessageBoxResult.Yes;
+        }
+        else if (tdResult == TaskDialogButton.No)
+        {
+            return MessageBoxResult.No;
+        }
+
+        return MessageBoxResult.None;
+    }
+
+    private class WpfWin32Window(Window w) : IWin32Window, System.Windows.Interop.IWin32Window
+    {
+        public IntPtr Handle => _helper.Handle;
+
+        private readonly System.Windows.Interop.WindowInteropHelper _helper = new(w);
     }
 }

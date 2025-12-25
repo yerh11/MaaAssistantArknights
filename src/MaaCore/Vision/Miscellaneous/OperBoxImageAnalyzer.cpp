@@ -1,13 +1,14 @@
 #include "OperBoxImageAnalyzer.h"
 
-#include "Utils/NoWarningCV.h"
-
+#include "Common/AsstTypes.h"
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Config/TaskData.h"
-#include "Utils/ImageIo.hpp"
+#include "MaaUtils/ImageIo.h"
+#include "MaaUtils/NoWarningCV.hpp"
 #include "Utils/Logger.hpp"
 #include "Vision/BestMatcher.h"
 #include "Vision/Matcher.h"
+#include "Vision/Miscellaneous/OperNameAnalyzer.h"
 #include "Vision/MultiMatcher.h"
 #include "Vision/RegionOCRer.h"
 #include "Vision/TemplDetOCRer.h"
@@ -19,7 +20,6 @@ bool asst::OperBoxImageAnalyzer::analyze()
     m_result.clear();
 
     bool ret = analyzer_oper_box();
-
     if (m_result.size() != 16 && m_result.size() != 14) { // 完整的一页是14或16个，有可能是识别错了
         save_img(utils::path("debug") / utils::path("oper"));
     }
@@ -29,7 +29,7 @@ bool asst::OperBoxImageAnalyzer::analyze()
 
 int asst::OperBoxImageAnalyzer::level_num(const std::string& level)
 {
-    if (level.empty() || !ranges::all_of(level, [](const char& c) -> bool { return std::isdigit(c); })) {
+    if (level.empty() || !std::ranges::all_of(level, [](const char& c) -> bool { return std::isdigit(c); })) {
         return 1;
     }
     return std::stoi(level);
@@ -60,32 +60,56 @@ bool asst::OperBoxImageAnalyzer::analyzer_oper_box()
 
 bool asst::OperBoxImageAnalyzer::opers_analyze()
 {
-    TemplDetOCRer oper_name_analyzer(m_image);
-
+    const auto& name_task = Task.get("OperBoxNameOCR");
     const auto& params = Task.get("OperBoxNameOCR")->special_params;
-    oper_name_analyzer.set_bin_threshold(params[0]);
-    oper_name_analyzer.set_bin_expansion(params[1]);
-    oper_name_analyzer.set_bin_trim_threshold(params[2], params[3]);
+    const auto& all_opers = BattleData.get_all_oper_names();
+    const auto& analyze_task = [&](const std::string& task,
+                                   const asst::Rect& roi) -> std::optional<TemplDetOCRer::ResultsVec> {
+        MultiMatcher matcher(m_image);
+        matcher.set_task_info(task);
+        matcher.set_roi(roi);
+        if (!matcher.analyze()) {
+            return std::nullopt;
+        }
+        asst::TemplDetOCRer::ResultsVec list;
+        for (const auto& flag : matcher.get_result()) {
+            OperNameAnalyzer name_analyzer(m_image);
+            name_analyzer.set_task_info(name_task);
+            name_analyzer.set_required(std::vector(all_opers.begin(), all_opers.end()));
+            name_analyzer.set_roi(flag.rect.move(name_task->rect_move));
+            name_analyzer.set_bin_threshold(params[0]);
+            name_analyzer.set_bin_expansion(params[1]);
+            name_analyzer.set_bin_trim_threshold(params[2], params[3]);
+            name_analyzer.set_bottom_line_height(params[4]);
+            name_analyzer.set_width_threshold(params[5]);
+            [[maybe_unused]] cv::Mat debug_img = make_roi(m_image, flag.rect.move(name_task->rect_move));
+            if (auto ocr_opt = name_analyzer.analyze()) {
+                TemplDetOCRer::Result
+                    ocr(ocr_opt->rect, ocr_opt->score, std::move(ocr_opt->text), flag.rect, flag.score);
+                list.emplace_back(std::move(ocr));
+            }
+            else {
+                Log.error("OperNameAnalyzer analyze failed");
+            }
+        }
+        if (list.empty()) {
+            return std::nullopt;
+        }
+        return list;
+    };
 
     TemplDetOCRer::ResultsVec results;
-
-    const auto& all_opers = BattleData.get_all_oper_names();
 
     Rect roi_top = Task.get("OperBoxFlagRoleTopROI")->roi;
     Rect roi_bottom = Task.get("OperBoxFlagRoleBottomROI")->roi;
 
     for (int i = 1; i < 10; ++i) {
-        oper_name_analyzer.set_task_info("OperBoxFlagRole" + std::to_string(i), "OperBoxNameOCR");
-        oper_name_analyzer.set_required(std::vector(all_opers.begin(), all_opers.end()));
-
-        oper_name_analyzer.set_roi(roi_top);
-        if (auto top_result_opt = oper_name_analyzer.analyze()) {
-            ranges::move(*top_result_opt, std::back_inserter(results));
+        if (auto top_result_opt = analyze_task("OperBoxFlagRole" + std::to_string(i), roi_top)) {
+            std::ranges::move(*top_result_opt, std::back_inserter(results));
         }
 
-        oper_name_analyzer.set_roi(roi_bottom);
-        if (auto bottom_result_opt = oper_name_analyzer.analyze()) {
-            ranges::move(*bottom_result_opt, std::back_inserter(results));
+        if (auto bottom_result_opt = analyze_task("OperBoxFlagRole" + std::to_string(i), roi_bottom)) {
+            std::ranges::move(*bottom_result_opt, std::back_inserter(results));
         }
     }
 
@@ -109,8 +133,14 @@ bool asst::OperBoxImageAnalyzer::opers_analyze()
 
 #ifdef ASST_DEBUG
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(flag_rect), cv::Scalar(0, 255, 0), 1);
-        cv::putText(m_image_draw, std::to_string(oper.flag_score), cv::Point(flag_rect.x, flag_rect.y - 10),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+        cv::putText(
+            m_image_draw,
+            std::to_string(oper.flag_score),
+            cv::Point(flag_rect.x, flag_rect.y - 10),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cv::Scalar(0, 0, 255),
+            1);
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(oper.rect), cv::Scalar(0, 255, 0), 1);
 #endif
 
@@ -146,8 +176,14 @@ bool asst::OperBoxImageAnalyzer::level_analyze()
         box.level = level_num(level);
 #ifdef ASST_DEBUG
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(ocr_result.rect), cv::Scalar(0, 255, 0), 1);
-        cv::putText(m_image_draw, level, cv::Point(roi.x, roi.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                    cv::Scalar(0, 0, 255), 2);
+        cv::putText(
+            m_image_draw,
+            level,
+            cv::Point(roi.x, roi.y - 10),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cv::Scalar(0, 0, 255),
+            2);
 #endif // ASST_DEBUG}
     }
     return true;
@@ -179,8 +215,14 @@ bool asst::OperBoxImageAnalyzer::elite_analyze()
         box.elite = std::stoi(elite);
 #ifdef ASST_DEBUG
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(roi), cv::Scalar(0, 255, 0), 1);
-        cv::putText(m_image_draw, std::to_string(box.elite), cv::Point(roi.x, roi.y - 10), cv::FONT_HERSHEY_SIMPLEX,
-                    0.5, cv::Scalar(0, 0, 255), 2);
+        cv::putText(
+            m_image_draw,
+            std::to_string(box.elite),
+            cv::Point(roi.x, roi.y - 10),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cv::Scalar(0, 0, 255),
+            2);
 #endif // ASST_DEBUG
     }
     return true;
@@ -211,8 +253,14 @@ bool asst::OperBoxImageAnalyzer::potential_analyze()
         box.potential = std::stoi(potential);
 #ifdef ASST_DEBUG
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(roi), cv::Scalar(0, 255, 0), 1);
-        cv::putText(m_image_draw, std::to_string(box.potential), cv::Point(roi.x, roi.y - 10), cv::FONT_HERSHEY_SIMPLEX,
-                    0.5, cv::Scalar(0, 0, 255), 2);
+        cv::putText(
+            m_image_draw,
+            std::to_string(box.potential),
+            cv::Point(roi.x, roi.y - 10),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cv::Scalar(0, 0, 255),
+            2);
 #endif // ASST_DEBUG
     }
     return true;

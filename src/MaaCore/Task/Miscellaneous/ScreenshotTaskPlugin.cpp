@@ -3,26 +3,28 @@
 #include "Config/TaskData.h"
 #include "Utils/Logger.hpp"
 
-asst::ScreenshotTaskPlugin::ScreenshotTaskPlugin(const AsstCallback& callback, Assistant* inst,
-                                                 std::string_view task_chain)
-    : AbstractTaskPlugin(callback, inst, task_chain)
+asst::ScreenshotTaskPlugin::ScreenshotTaskPlugin(
+    const AsstCallback& callback,
+    Assistant* inst,
+    std::string_view task_chain) :
+    AbstractTaskPlugin(callback, inst, task_chain)
 {
     m_screenshot_tasks.clear();
     if (auto ptr = Task.get(config_name)) {
-        ranges::copy(ptr->next, std::back_inserter(m_screenshot_tasks));
+        std::ranges::copy(ptr->next, std::back_inserter(m_screenshot_tasks));
     }
     else {
         Log.info(__FUNCTION__, "| no config found");
     }
 
 #ifndef ASST_DEBUG
-    bool need_save_debug_img = std::ifstream("DEBUG").good() || std::ifstream("DEBUG.txt").good();
+    static const bool need_save_debug_img = std::filesystem::exists("DEBUG.txt");
     if (!need_save_debug_img) {
         return;
     }
 #endif
     if (auto ptr = Task.get(debug_config_name)) {
-        ranges::copy(ptr->next, std::back_inserter(m_screenshot_tasks));
+        std::ranges::copy(ptr->next, std::back_inserter(m_screenshot_tasks));
     }
     else {
         Log.info(__FUNCTION__, "| no debug config found");
@@ -44,7 +46,7 @@ bool asst::ScreenshotTaskPlugin::verify(AsstMsg msg, const json::value& details)
         m_last_triggered_time = now;
         return false;
     }
-    if (ranges::any_of(m_screenshot_tasks, [&task](std::string_view item) { return task.ends_with(item); })) {
+    if (std::ranges::any_of(m_screenshot_tasks, [&task](std::string_view item) { return task.ends_with(item); })) {
         m_last_triggered_task = task;
         m_last_triggered_time = now;
         return true;

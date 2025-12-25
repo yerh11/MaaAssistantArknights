@@ -1,6 +1,6 @@
 #include "RoguelikeFormationImageAnalyzer.h"
 
-#include "Utils/NoWarningCV.h"
+#include "MaaUtils/NoWarningCV.hpp"
 
 #include "Config/TaskData.h"
 #include "Utils/Logger.hpp"
@@ -43,8 +43,8 @@ bool asst::RoguelikeFormationImageAnalyzer::analyze()
     return !m_result.empty();
 }
 
-const std::vector<asst::RoguelikeFormationImageAnalyzer::FormationOper>& asst::RoguelikeFormationImageAnalyzer::
-    get_result() const noexcept
+const std::vector<asst::RoguelikeFormationImageAnalyzer::FormationOper>&
+    asst::RoguelikeFormationImageAnalyzer::get_result() const noexcept
 {
     return m_result;
 }

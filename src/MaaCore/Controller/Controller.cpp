@@ -2,13 +2,12 @@
 
 #include "Utils/Platform.hpp"
 
-#include <regex>
+#include <boost/regex.hpp>
 #include <utility>
 #include <vector>
 
 #include "Assistant.h"
-#include "Common/AsstConf.h"
-#include "Utils/NoWarningCV.h"
+#include "MaaUtils/NoWarningCV.hpp"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -20,23 +19,60 @@
 #endif
 
 #include "AdbController.h"
+#include "ControllerAPI.h"
+#include "MaatouchController.h"
+#include "MinitouchController.h"
+#include "PlayToolsController.h"
 
 #include "Common/AsstTypes.h"
 #include "Utils/Logger.hpp"
 
-asst::Controller::Controller(const AsstCallback& callback, Assistant* inst)
-    : InstHelper(inst)
-    , m_callback(callback)
-    , m_rand_engine(std::random_device {}())
+asst::Controller::Controller(const AsstCallback& callback, Assistant* inst) :
+    InstHelper(inst),
+    m_callback(callback)
 {
     LogTraceFunction;
-
-    m_controller_factory = std::make_unique<ControllerFactory>(callback, inst);
 }
 
 asst::Controller::~Controller()
 {
     LogTraceFunction;
+}
+
+std::shared_ptr<asst::ControllerAPI> asst::Controller::create_controller(
+    ControllerType type,
+    const std::string& adb_path,
+    const std::string& address,
+    const std::string& config,
+    PlatformType platform_type) const
+{
+    std::shared_ptr<ControllerAPI> controller;
+    try {
+        switch (type) {
+        case ControllerType::Adb:
+            controller = std::make_shared<AdbController>(m_callback, m_inst, platform_type);
+            break;
+        case ControllerType::Minitouch:
+            controller = std::make_shared<MinitouchController>(m_callback, m_inst, platform_type);
+            break;
+        case ControllerType::Maatouch:
+            controller = std::make_shared<MaatouchController>(m_callback, m_inst, platform_type);
+            break;
+        case ControllerType::MacPlayTools:
+            controller = std::make_shared<PlayToolsController>(m_callback, m_inst, platform_type);
+            break;
+        default:
+            return nullptr;
+        }
+    }
+    catch (const std::exception& e) {
+        Log.error("Unable to create controller: {}", e.what());
+        return nullptr;
+    }
+    if (controller->connect(adb_path, address, config)) {
+        return controller;
+    }
+    return nullptr;
 }
 
 size_t asst::Controller::get_pipe_data_size() const noexcept
@@ -74,15 +110,19 @@ void asst::Controller::callback(AsstMsg msg, const json::value& details)
     }
 }
 
-#define CHECK_EXIST(object, return_type)      \
-    if (!object) {                            \
-        Log.error(#object, " is not inited"); \
-        return return_type;                   \
+#define CHECK_EXIST(object, return_value)                       \
+    if (!object) {                                              \
+        Log.error(__FUNCTION__, "|", #object, "is not inited"); \
+        return return_value;                                    \
     }
 
 void asst::Controller::sync_params()
 {
-    CHECK_EXIST(m_controller, );
+    if (!m_controller) {
+        // 参数没有实时同步，但是在连接时会被同步
+        Log.info("skip sync_params, retry when connect");
+        return;
+    }
     m_controller->set_swipe_with_pause(m_swipe_with_pause);
     m_controller->set_kill_adb_on_exit(m_kill_adb_on_exit);
 }
@@ -113,10 +153,10 @@ bool asst::Controller::start_game(const std::string& client_type)
     return m_controller->start_game(client_type);
 }
 
-bool asst::Controller::stop_game()
+bool asst::Controller::stop_game(const std::string& client_type)
 {
     CHECK_EXIST(m_controller, false);
-    return m_controller->stop_game();
+    return m_controller->stop_game(client_type);
 }
 
 bool asst::Controller::click(const Point& p)
@@ -129,6 +169,12 @@ bool asst::Controller::click(const Rect& rect)
 {
     CHECK_EXIST(m_controller, false);
     return m_scale_proxy->click(rect);
+}
+
+bool asst::Controller::input(const std::string& text)
+{
+    CHECK_EXIST(m_controller, false);
+    return m_controller->input(text);
 }
 
 bool asst::Controller::swipe(
@@ -151,10 +197,12 @@ bool asst::Controller::swipe(
     bool extra_swipe,
     double slope_in,
     double slope_out,
-    bool with_pause)
+    bool with_pause,
+    bool high_resolution_swipe_fix)
 {
     CHECK_EXIST(m_controller, false);
-    return m_scale_proxy->swipe(r1, r2, duration, extra_swipe, slope_in, slope_out, with_pause);
+    return m_scale_proxy
+        ->swipe(r1, r2, duration, extra_swipe, slope_in, slope_out, with_pause, high_resolution_swipe_fix);
 }
 
 bool asst::Controller::inject_input_event(InputEvent& event)
@@ -177,19 +225,13 @@ asst::ControlFeat::Feat asst::Controller::support_features()
     return m_controller->support_features();
 }
 
-bool asst::Controller::connect(
-    const std::string& adb_path,
-    const std::string& address,
-    const std::string& config)
+bool asst::Controller::connect(const std::string& adb_path, const std::string& address, const std::string& config)
 {
     LogTraceFunction;
 
     clear_info();
 
-    m_controller =
-        m_controller_factory
-            ->create_controller(m_controller_type, adb_path, address, config, m_platform_type);
-
+    m_controller = create_controller(m_controller_type, adb_path, address, config, m_platform_type);
     if (!m_controller) {
         Log.error("connect failed");
         return false;
@@ -225,8 +267,7 @@ bool asst::Controller::connect(
     };
 
     try {
-        m_scale_proxy =
-            std::make_shared<ControlScaleProxy>(m_controller, m_controller_type, proxy_callback);
+        m_scale_proxy = std::make_shared<ControlScaleProxy>(m_controller, m_controller_type, proxy_callback);
     }
     catch (const std::exception& e) {
         Log.error("Cannot create controller proxy: {}", e.what());

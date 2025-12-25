@@ -2,21 +2,23 @@
 
 #include <filesystem>
 
-#include "Utils/NoWarningCV.h"
-ASST_SUPPRESS_CV_WARNINGS_START
+#include "MaaUtils/NoWarningCV.hpp"
+MAA_SUPPRESS_CV_WARNINGS_BEGIN
 #include "fastdeploy/vision/ocr/ppocr/dbdetector.h"
 #include "fastdeploy/vision/ocr/ppocr/ppocr_v3.h"
 #include "fastdeploy/vision/ocr/ppocr/recognizer.h"
-ASST_SUPPRESS_CV_WARNINGS_END
+MAA_SUPPRESS_CV_WARNINGS_END
 
 #include "Utils/Demangle.hpp"
-#include "Utils/File.hpp"
 #include "Utils/Logger.hpp"
 #include "Utils/Platform.hpp"
-#include "Utils/Ranges.hpp"
 #include "Utils/StringMisc.hpp"
+#include <ranges>
 
-asst::OcrPack::OcrPack() : m_det(nullptr), m_rec(nullptr), m_ocr(nullptr)
+asst::OcrPack::OcrPack() :
+    m_det(nullptr),
+    m_rec(nullptr),
+    m_ocr(nullptr)
 {
     LogTraceFunction;
 }
@@ -24,6 +26,12 @@ asst::OcrPack::OcrPack() : m_det(nullptr), m_rec(nullptr), m_ocr(nullptr)
 asst::OcrPack::~OcrPack()
 {
     LogTraceFunction;
+    if (m_gpu_id) {
+        // FIXME: leak fastdeploy objects to avoid crash (double free?)
+        (void)m_det.release();
+        (void)m_rec.release();
+        (void)m_ocr.release();
+    }
 }
 
 bool asst::OcrPack::load(const std::filesystem::path& path)
@@ -77,7 +85,13 @@ asst::OcrPack::ResultsVec asst::OcrPack::recognize(const cv::Mat& image, bool wi
         std::string rec_text;
         float rec_score = 0;
         m_rec->Predict(image, &rec_text, &rec_score);
+#ifdef ASST_DEBUG
+        // zzyyyl 注: RelWithDebInfo 时 OCR 莫名很卡，简单查了一下发现主要是这里的
+        // _com_error 很多导致的，暂时把 std::move 去掉
+        ocr_result.text.emplace_back(rec_text);
+#else
         ocr_result.text.emplace_back(std::move(rec_text));
+#endif
         ocr_result.rec_scores.emplace_back(rec_score);
     }
 
@@ -95,8 +109,8 @@ asst::OcrPack::ResultsVec asst::OcrPack::recognize(const cv::Mat& image, bool wi
             const auto& box = ocr_result.boxes.at(i);
             int x_collect[] = { box[0], box[2], box[4], box[6] };
             int y_collect[] = { box[1], box[3], box[5], box[7] };
-            auto [left, right] = ranges::minmax(x_collect);
-            auto [top, bottom] = ranges::minmax(y_collect);
+            auto [left, right] = std::ranges::minmax(x_collect);
+            auto [top, bottom] = std::ranges::minmax(y_collect);
             det_rect = Rect(left, top, right - left, bottom - top);
         }
         else {
@@ -106,12 +120,7 @@ asst::OcrPack::ResultsVec asst::OcrPack::recognize(const cv::Mat& image, bool wi
 #ifdef ASST_DEBUG
         cv::rectangle(draw, make_rect<cv::Rect>(det_rect), cv::Scalar(0, 0, 255), 2);
 #endif
-        Result result {
-            .rect = det_rect,
-            .score = ocr_result.rec_scores.at(i),
-            .text = std::move(ocr_result.text.at(i)),
-        };
-        raw_results.emplace_back(std::move(result));
+        raw_results.emplace_back(Result(det_rect, ocr_result.rec_scores.at(i), std::move(ocr_result.text.at(i))));
     }
 
     auto costs =
@@ -129,22 +138,39 @@ bool asst::OcrPack::check_and_load()
 
     LogTraceFunction;
 
-    fastdeploy::RuntimeOption option;
-    option.UseOrtBackend();
+    fastdeploy::RuntimeOption det_option;
+    fastdeploy::RuntimeOption rec_option;
+    det_option.UseOrtBackend();
+    rec_option.UseOrtBackend();
+
+#ifdef _WIN32
     if (m_gpu_id) {
-        option.UseGpu(*m_gpu_id);
+        det_option.UseDirectML(*m_gpu_id);
+        rec_option.UseDirectML(*m_gpu_id);
     }
+#elif defined(__APPLE__)
+    // https://github.com/microsoft/onnxruntime/blob/main/include/onnxruntime/core/providers/coreml/coreml_provider_factory.h
+    // COREML_FLAG_ONLY_ENABLE_DEVICE_WITH_ANE
+    det_option.UseCoreML(0x004);
+    // rec 结果不对，先禁用
+    rec_option.UseCpu();
+#else
+    det_option.UseCpu();
+    rec_option.UseCpu();
+#endif
 
-    auto det_model = asst::utils::read_file<std::string>(m_det_model_path);
-    option.SetModelBuffer(det_model.data(), det_model.size(), nullptr, 0, fastdeploy::ModelFormat::ONNX);
-    m_det = std::make_unique<fastdeploy::vision::ocr::DBDetector>("dummy.onnx", std::string(), option,
-                                                                  fastdeploy::ModelFormat::ONNX);
+    m_det = std::make_unique<fastdeploy::vision::ocr::DBDetector>(
+        platform::path_to_utf8_string(m_det_model_path),
+        std::string(),
+        det_option,
+        fastdeploy::ModelFormat::ONNX);
 
-    auto rec_model = asst::utils::read_file<std::string>(m_rec_model_path);
-    std::string rec_label = asst::utils::read_file<std::string>(m_rec_label_path);
-    option.SetModelBuffer(rec_model.data(), rec_model.size(), nullptr, 0, fastdeploy::ModelFormat::ONNX);
-    m_rec = std::make_unique<fastdeploy::vision::ocr::Recognizer>("dummy.onnx", std::string(), rec_label, option,
-                                                                  fastdeploy::ModelFormat::ONNX);
+    m_rec = std::make_unique<fastdeploy::vision::ocr::Recognizer>(
+        platform::path_to_utf8_string(m_rec_model_path),
+        std::string(),
+        platform::path_to_utf8_string(m_rec_label_path),
+        rec_option,
+        fastdeploy::ModelFormat::ONNX);
 
     if (m_det && m_rec) {
         m_ocr = std::make_unique<fastdeploy::pipeline::PPOCRv3>(m_det.get(), m_rec.get());

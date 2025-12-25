@@ -59,8 +59,9 @@ asst::ResultOrError<bool> asst::TaskDataSymbolStream::parse(std::string_view tas
             auto symbol = TaskDataSymbol::type(std::string_view { std::addressof(*p), 1 });
             if (symbol == TaskDataSymbol::Name) [[unlikely]] {
                 // should not happen
-                return { std::nullopt, std::string("Error when decode symbol ") + *p + " at " +
-                                           std::to_string(p - task_expr.cbegin()) + " in " += task_expr };
+                return { std::nullopt,
+                         std::string("Error when decode symbol ") + *p + " at " +
+                             std::to_string(p - task_expr.cbegin()) + " in " += task_expr };
             }
             m_symbolstream.emplace_back(symbol);
             break;
@@ -75,8 +76,8 @@ asst::ResultOrError<bool> asst::TaskDataSymbolStream::parse(std::string_view tas
     return task_changed;
 }
 
-asst::TaskDataSymbolStream::SymbolsOrError asst::TaskDataSymbolStream::decode(AppendPrefixFunc append_prefix,
-                                                                              std::string_view self_name) const
+asst::TaskDataSymbolStream::SymbolsOrError
+    asst::TaskDataSymbolStream::decode(AppendPrefixFunc append_prefix, std::string_view self_name) const
 {
     /*
     $name         = 至少一位的任务名
@@ -141,18 +142,18 @@ asst::TaskDataSymbolStream::SymbolsOrError asst::TaskDataSymbolStream::decode(Ap
             }
             if (op == Symbol::Add) {
                 // x = x + y
-                ranges::move(y, std::back_inserter(x));
+                std::ranges::move(y, std::back_inserter(x));
             }
             else {
                 // x = x - y
                 // WARNING:
                 // self_name + #self ^ #self = #none
                 // self_name + #self ^ self_name = #self
-                if (ranges::any_of(y, [&](const auto& sy) { return sy == Symbol::SharpSelf; })) {
+                if (std::ranges::any_of(y, [&](const auto& sy) { return sy == Symbol::SharpSelf; })) {
                     std::erase(x, self_name);
                 }
                 std::erase_if(x, [&](const auto& sx) {
-                    return ranges::any_of(y, [&](const auto& sy) { return sx == sy; });
+                    return std::ranges::any_of(y, [&](const auto& sy) { return sx == sy; });
                 });
             }
         }
@@ -194,7 +195,7 @@ asst::TaskDataSymbolStream::SymbolsOrError asst::TaskDataSymbolStream::decode(Ap
             }
             Symbols x_copy = x;
             for (int i = 0; i < times - 1; ++i) {
-                ranges::copy(x_copy, std::back_inserter(x));
+                std::ranges::copy(x_copy, std::back_inserter(x));
             }
         }
         return x;
@@ -225,7 +226,7 @@ asst::TaskDataSymbolStream::SymbolsOrError asst::TaskDataSymbolStream::decode(Ap
                         return { std::nullopt,
                                  "decode_vtasks: failed while " + sx.name() + " @ " + sy.name() + ", " + opt.error() };
                     }
-                    ranges::copy(*opt, std::back_inserter(x));
+                    std::ranges::copy(*opt, std::back_inserter(x));
                 }
             }
         }

@@ -1,6 +1,6 @@
 // <copyright file="ErrorView.xaml.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -11,10 +11,11 @@
 // but WITHOUT ANY WARRANTY
 // </copyright>
 
+#nullable enable
+
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -22,138 +23,181 @@ using System.Windows.Documents;
 using MaaWpfGui.Constants;
 using MaaWpfGui.Helper;
 
-namespace MaaWpfGui.Views.UI
+namespace MaaWpfGui.Views.UI;
+
+/// <summary>
+///     ErrorView.xaml 的交互逻辑
+/// </summary>
+public partial class ErrorView : INotifyPropertyChanged
 {
+    protected bool ShouldExit { get; set; } = true;
+
+    public string ExceptionMessage { get; set; } = string.Empty;
+
+    public string PossibleSolution { get; set; } = string.Empty;
+
+    public string ExceptionDetails { get; set; } = string.Empty;
+
+    private bool _congratulationsOnError = true;
+
+    public string ErrorString { get; set; } = LocalizationHelper.GetString("Error");
+
+    public string ErrorCongratulationsString { get; set; } = LocalizationHelper.GetString("ErrorCongratulations");
+
     /// <summary>
-    ///     ErrorView.xaml 的交互逻辑
+    /// Gets or sets a value indicating whether to enable congratulation mode for ErrorView.
     /// </summary>
-    public partial class ErrorView : INotifyPropertyChanged
+    public bool CongratulationsOnError
     {
-        protected bool ShouldExit { get; set; }
-
-        public string ExceptionMessage { get; set; }
-
-        public string PossibleSolution { get; set; }
-
-        public string ExceptionDetails { get; set; }
-
-        public ErrorView()
+        get => _congratulationsOnError;
+        set
         {
-            InitializeComponent();
+            _congratulationsOnError = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CongratulationsOnError)));
         }
+    }
 
-        public ErrorView(Exception exc, bool shouldExit)
+    public ErrorView()
+    {
+        InitializeComponent();
+    }
+
+    public ErrorView(Exception exc, bool shouldExit)
+    {
+        InitializeComponent();
+        var exc0 = exc;
+        var errorStr = new StringBuilder();
+        while (true)
         {
-            InitializeComponent();
-            var exc0 = exc;
-            var errorStr = new StringBuilder();
-            while (true)
+            errorStr.Append(exc.Message);
+            if (exc.InnerException != null)
             {
-                errorStr.Append(exc.Message);
-                if (exc.InnerException != null)
-                {
-                    errorStr.AppendLine();
-                    exc = exc.InnerException;
-                }
-                else
-                {
-                    break;
-                }
+                errorStr.AppendLine();
+                exc = exc.InnerException;
             }
-
-            var error = errorStr.ToString();
-            var details = exc0.ToString();
-            ExceptionMessage = error;
-            ExceptionDetails = details;
-            PossibleSolution = GetSolution(error, details);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ExceptionMessage)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PossibleSolution)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ExceptionDetails)));
-            ShouldExit = shouldExit;
-
-            var isZhCn = ConfigurationHelper.GetValue(ConfigurationKeys.Localization, LocalizationHelper.DefaultLanguage) == "zh-cn";
-            ErrorQqGroupLink.Visibility = isZhCn ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        private static string GetSolution(string error, string details)
-        {
-            _ = error; // To avoid warning
-            if (details.Contains("AsstGetVersion()") ||
-                details.Contains("DllNotFoundException") ||
-                details.Contains("lambda_method") ||
-                details.Contains("HandyControl") ||
-                (details.Contains("System.Net.Http") && details.Contains("Version")))
+            else
             {
-                return LocalizationHelper.GetString("ErrorSolutionCrash");
-            }
-
-            if (details.Contains("CheckAndUpdateNow()") && details.Contains("MoveFile"))
-            {
-                return LocalizationHelper.GetString("ErrorSolutionUpdatePackageExtractionFailed");
-            }
-
-            if (details.Contains("Hyperlink_Click") && details.Contains("StartWithShellExecuteEx"))
-            {
-                return LocalizationHelper.GetString("ErrorSolutionSelectDefaultBrowser");
-            }
-
-            // ReSharper disable once ConvertIfStatementToReturnStatement
-            if (details.Contains("System.IO.File.InternalMove"))
-            {
-                return LocalizationHelper.GetString("ErrorSolutionFailedToMove");
-            }
-
-            return LocalizationHelper.GetString("UnknownErrorOccurs");
-        }
-
-        protected override void OnClosed(EventArgs e)
-        {
-            if (ShouldExit)
-            {
-                Environment.Exit(0);
-            }
-
-            base.OnClosed(e);
-        }
-
-        private void Hyperlink_OnClick(object sender, RoutedEventArgs e)
-        {
-            Process.Start(new ProcessStartInfo(((Hyperlink)sender).NavigateUri.AbsoluteUri) { UseShellExecute = true });
-        }
-
-        private void CopyToClipboard()
-        {
-            var range = new TextRange(RichTextBox.Document.ContentStart, RichTextBox.Document.ContentEnd);
-            var data = new DataObject();
-            data.SetText(range.Text);
-            if (range.CanSave(DataFormats.Rtf))
-            {
-                var ms = new MemoryStream();
-                range.Save(ms, DataFormats.Rtf);
-                var arr = ms.ToArray();
-
-                // Save to RTF doesn't write non-ascii characters (implementation-defined behavior?)
-                data.SetData(DataFormats.Rtf, Encoding.UTF8.GetString(arr));
-            }
-
-            try
-            {
-                Clipboard.SetDataObject(data, true);
-            }
-            catch
-            {
-                // 有时候报错了也能复制上去，这个时候复制不了也没办法了
+                break;
             }
         }
 
-        private async void CopyErrorMessage_Click(object sender, RoutedEventArgs e)
+        var error = errorStr.ToString();
+        var details = exc0.ToString();
+        ExceptionMessage = error;
+        ExceptionDetails = details;
+        PossibleSolution = GetSolution(error, details);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ExceptionMessage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PossibleSolution)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ExceptionDetails)));
+        ShouldExit = shouldExit;
+
+        var isZhCn = ConfigurationHelper.GetGlobalValue(ConfigurationKeys.Localization, LocalizationHelper.DefaultLanguage) == "zh-cn";
+        ErrorQqGroupLink.Visibility = isZhCn ? Visibility.Visible : Visibility.Collapsed;
+
+        try
+        {
+            AchievementTrackerHelper.Instance.Unlock(AchievementIds.CongratulationError);
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private static string GetSolution(string error, string details)
+    {
+        _ = error; // To avoid warning
+        if (details.Contains("MaaCore.dll not found!") ||
+            details.Contains("resource folder not found!"))
+        {
+            return LocalizationHelper.GetString("ErrorSolutionMoveMaaExeOutOfFolder");
+        }
+
+        if (details.Contains("AsstGetVersion()") ||
+            details.Contains("DllNotFoundException") ||
+            details.Contains("lambda_method") ||
+            details.Contains("HandyControl") ||
+            (details.Contains("System.Net.Http") && details.Contains("Version")))
+        {
+            return LocalizationHelper.GetString("ErrorSolutionCrash");
+        }
+
+        if (details.Contains("CheckAndUpdateNow()") && (details.Contains("MoveFile") || details.Contains("DeleteFile")))
+        {
+            return LocalizationHelper.GetString("ErrorSolutionUpdatePackageExtractionFailed");
+        }
+
+        if (details.Contains("Hyperlink_Click") && details.Contains("StartWithShellExecuteEx"))
+        {
+            return LocalizationHelper.GetString("ErrorSolutionSelectDefaultBrowser");
+        }
+
+        // ReSharper disable once ConvertIfStatementToReturnStatement
+        if (details.Contains("System.IO.File.InternalMove"))
+        {
+            return LocalizationHelper.GetString("ErrorSolutionFailedToMove");
+        }
+
+        AchievementTrackerHelper.Instance.Unlock(AchievementIds.UnexpectedCrash);
+
+        return $"{LocalizationHelper.GetString("UnknownErrorOccurs")}\n" +
+               $"{LocalizationHelper.GetString("ErrorCrashMessageOpenLog")}\n" +
+               $"{LocalizationHelper.GetString("ErrorCrashMessageGenerateReport")}\n" +
+               $"{LocalizationHelper.GetString("ErrorCrashMessageHelpTip")}";
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        if (ShouldExit)
+        {
+            Environment.Exit(0);
+        }
+
+        base.OnClosed(e);
+    }
+
+    private void Hyperlink_OnClick(object sender, RoutedEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo(((Hyperlink)sender).NavigateUri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    private void CopyToClipboard()
+    {
+        var data = new DataObject();
+        var textToCopy =
+            $"{LocalizationHelper.GetString("ErrorProlog")}\n" +
+            $"\t{ExceptionMessage}\n" +
+            $"{LocalizationHelper.GetString("ErrorSolution")}\n" +
+            $"\t{PossibleSolution}\n" +
+            $"{LocalizationHelper.GetString("ErrorDetails")}\n" +
+            $"{ExceptionDetails}";
+        data.SetText(textToCopy);
+
+        try
+        {
+            System.Windows.Forms.Clipboard.Clear();
+            System.Windows.Forms.Clipboard.SetDataObject(data, true);
+        }
+        catch
+        {
+            // 有时候报错了也能复制上去，这个时候复制不了也没办法了
+        }
+    }
+
+    private async void CopyErrorMessage_Click(object sender, RoutedEventArgs e)
+    {
+        try
         {
             CopyToClipboard();
             CopiedTip.IsOpen = true;
             await Task.Delay(3000);
             CopiedTip.IsOpen = false;
+        }
+        catch
+        {
+            // ignored
         }
     }
 }

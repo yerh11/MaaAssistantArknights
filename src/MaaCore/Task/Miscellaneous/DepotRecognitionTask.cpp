@@ -50,6 +50,7 @@ bool asst::DepotRecognitionTask::swipe_and_analyze()
         future.wait();
         callback_analyze_result(false);
     }
+    DepotImageAnalyzer::clear_cached_templates();
     return !m_all_items.empty();
 }
 
@@ -61,7 +62,7 @@ void asst::DepotRecognitionTask::callback_analyze_result(bool done)
     json::value info = basic_info_with_what("DepotInfo");
     auto& details = info["details"];
 
-    // https://penguin-stats.cn/planner
+    // https://penguin-stats.io/planner
     if (auto arkplanner_template_opt = json::parse(templ.ark_planner)) {
         auto& arkplanner = details["arkplanner"];
         auto& arkplanner_obj = arkplanner["object"];
@@ -69,11 +70,12 @@ void asst::DepotRecognitionTask::callback_analyze_result(bool done)
         auto& arkplanner_data_items = arkplanner_obj["items"];
 
         for (const auto& [item_id, item_info] : m_all_items) {
-            arkplanner_data_items.emplace(json::object {
-                { "id", item_id },
-                { "have", item_info.quantity },
-                { "name", item_info.item_name },
-            });
+            arkplanner_data_items.emplace(
+                json::object {
+                    { "id", item_id },
+                    { "have", item_info.quantity },
+                    { "name", item_info.item_name },
+                });
         }
         arkplanner["data"] = arkplanner_obj.to_string();
     }

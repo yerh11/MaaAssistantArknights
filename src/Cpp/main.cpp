@@ -8,27 +8,37 @@
 
 int main([[maybe_unused]] int argc, char** argv)
 {
-    const auto cur_path = std::filesystem::path(argv[0]).parent_path();
+    auto working_path = std::filesystem::path(argv[0]).parent_path();
 
-    // 可以将日志、调试图片等存到别的目录下，需要在最一开始调用。不调用默认保存到资源同目录
-    // AsstSetUserDir(cur_path.c_str());
+    if (!std::filesystem::exists(working_path / "resource")) {
+        std::cerr << "resource folder not found!" << std::endl;
+        return -1;
+    }
+
+    // 可以将日志、调试图片等存到别的目录下,需要在最一开始调用。不调用默认保存到资源同目录
+    // AsstSetUserDir(working_path.c_str());
 
     // 这里默认读取的是可执行文件同目录下 resource 文件夹里的资源
-    bool loaded = AsstLoadResource(cur_path.string().c_str());
-    if (!loaded) {
+    if (!AsstLoadResource(working_path.string().c_str())) {
         std::cerr << "-------- load resource failed: official --------" << std::endl;
         return -1;
     }
 
 #ifdef ASST_DEBUG
-    if (argc >= 2) {
-        std::string overseas_type(argv[1]); // "YoStarJP", "YoStarEN", "YoStarKR", "txwy"
-        std::cout << "load overseas_type:" << overseas_type << std::endl;
+    if (argc > 1) {
+        const std::string arg(argv[1]);
 
-        const auto overseas_path = cur_path / "resource" / "global" / overseas_type;
-        if (!AsstLoadResource(overseas_path.string().c_str())) {
-            std::cerr << "-------- load resource failed: " << overseas_type << " --------" << std::endl;
-            return -1;
+        if (arg == "Official") {
+            std::cout << "Official type detected, using default resources." << std::endl;
+        }
+        else {
+            std::cout << "load overseas_type: " << arg << std::endl;
+
+            const auto overseas_path = working_path / "resource" / "global" / arg;
+            if (!AsstLoadResource(overseas_path.string().c_str())) {
+                std::cerr << "-------- load resource failed: " << arg << " --------" << std::endl;
+                return -1;
+            }
         }
     }
 #endif
@@ -41,6 +51,7 @@ int main([[maybe_unused]] int argc, char** argv)
 
 #ifdef SMOKE_TESTING
     std::cout << "Ended early for smoke testing." << std::endl;
+    AsstDestroy(ptr);
     return 0;
 #endif
 
@@ -52,13 +63,12 @@ int main([[maybe_unused]] int argc, char** argv)
     if (!AsstConnected(ptr)) {
         std::cerr << "connect failed" << std::endl;
         AsstDestroy(ptr);
-        ptr = nullptr;
-
         return -1;
     }
 
-#ifndef ASST_DEBUG
-
+#ifdef ASST_DEBUG
+    AsstAppendTask(ptr, "Debug", nullptr);
+#else
     /* 详细参数可参考 docs / 集成文档.md */
     AsstAppendTask(ptr, "StartUp", nullptr);
 
@@ -96,20 +106,26 @@ int main([[maybe_unused]] int argc, char** argv)
     }
     )");
 
-    AsstAppendTask(ptr, "Award", nullptr);
+    AsstAppendTask(ptr, "Award", R"(
+    {
+        "award": true,
+        "mail": true,
+        "recruit": true,
+        "orundum": true,
+        "mining": true,
+        "specialaccess": true
+    }
+    )");
 
     AsstAppendTask(ptr, "Roguelike", R"(
-{
-    "squad": "突击战术分队",
-    "roles": "先手必胜",
-    "core_char": "棘刺"
-}
-)");
-
-#else
-
-    AsstAppendTask(ptr, "Debug", nullptr);
-
+    {
+        "theme": "Sarkaz",
+        "mode": 1,
+        "squad": "蓝图测绘分队",
+        "roles": "稳扎稳打",
+        "core_char": "维什戴尔"
+    }
+    )");
 #endif
 
     AsstStart(ptr);
@@ -120,7 +136,6 @@ int main([[maybe_unused]] int argc, char** argv)
 
     AsstStop(ptr);
     AsstDestroy(ptr);
-    ptr = nullptr;
 
     return 0;
 }

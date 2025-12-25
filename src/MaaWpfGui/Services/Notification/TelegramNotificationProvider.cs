@@ -1,6 +1,6 @@
 // <copyright file="TelegramNotificationProvider.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -14,11 +14,13 @@
 #nullable enable
 
 using System;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using MaaWpfGui.Constants;
-using MaaWpfGui.Helper;
 using MaaWpfGui.Services.Web;
+using MaaWpfGui.ViewModels.UI;
 using Serilog;
 
 namespace MaaWpfGui.Services.Notification;
@@ -29,18 +31,37 @@ public class TelegramNotificationProvider(IHttpService httpService) : IExternalN
 
     public async Task<bool> SendAsync(string title, string content)
     {
-        var botToken = ConfigurationHelper.GetValue(ConfigurationKeys.ExternalNotificationTelegramBotToken, string.Empty);
-        var chatId = ConfigurationHelper.GetValue(ConfigurationKeys.ExternalNotificationTelegramChatId, string.Empty);
+        var botToken = SettingsViewModel.ExternalNotificationSettings.TelegramBotToken;
+        var chatId = SettingsViewModel.ExternalNotificationSettings.TelegramChatId;
+        var topicId = SettingsViewModel.ExternalNotificationSettings.TelegramTopicId;
 
         var uri = $"https://api.telegram.org/bot{botToken}/sendMessage";
 
-        var response = await httpService.PostAsJsonAsync(
-            new Uri(uri),
-            new TelegramPostContent { ChatId = chatId, Content = $"{title}: {content}" });
-
-        if (response is not null)
+        var postContent = new TelegramPostContent
         {
-            return true;
+            ChatId = chatId,
+            Content = $"{title}: {content}",
+        };
+
+        // Only add the topic ID if one is provided
+        if (!string.IsNullOrEmpty(topicId))
+        {
+            postContent.TopicId = topicId;
+        }
+
+        try
+        {
+            var response = await httpService.PostAsync(new(uri), new StringContent(JsonSerializer.Serialize(postContent), Encoding.UTF8, "application/json"), uriPartial: UriPartial.Authority);
+            response.EnsureSuccessStatusCode();
+            var str = await response.Content.ReadAsStringAsync();
+            if (response is not null)
+            {
+                return !str.Contains("\"ok\":false");
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.Error(e, "Failed to send POST request to {Uri}", uri);
         }
 
         _logger.Warning("Failed to send message.");
@@ -49,13 +70,13 @@ public class TelegramNotificationProvider(IHttpService httpService) : IExternalN
 
     private class TelegramPostContent
     {
-        // ReSharper disable UnusedAutoPropertyAccessor.Local
         [JsonPropertyName("chat_id")]
         public string? ChatId { get; set; }
 
         [JsonPropertyName("text")]
         public string? Content { get; set; }
 
-        // ReSharper restore UnusedAutoPropertyAccessor.Local
+        [JsonPropertyName("message_thread_id")]
+        public string? TopicId { get; set; }
     }
 }

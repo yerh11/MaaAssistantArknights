@@ -1,6 +1,6 @@
 // <copyright file="NotificationImplLibNotify.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -15,7 +15,6 @@ using System;
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using MaaWpfGui.WineCompat;
@@ -68,7 +67,7 @@ internal class NotificationImplLibNotify : INotificationPoster
 
     public void ShowNotification(NotificationContent content)
     {
-        var notification = new LibNotifyNotification(content.Summary, content.Body, "");
+        var notification = new LibNotifyNotification(content.Summary, content.Body, string.Empty);
         notification.SetImageFromPixbuf(_icon);
         foreach (var action in content.Actions)
         {

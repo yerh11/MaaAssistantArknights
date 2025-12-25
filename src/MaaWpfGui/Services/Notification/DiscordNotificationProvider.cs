@@ -1,6 +1,6 @@
 // <copyright file="DiscordNotificationProvider.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -17,9 +17,8 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using MaaWpfGui.Constants;
-using MaaWpfGui.Helper;
 using MaaWpfGui.Services.Web;
+using MaaWpfGui.ViewModels.UI;
 using Serilog;
 
 namespace MaaWpfGui.Services.Notification;
@@ -32,8 +31,8 @@ public class DiscordNotificationProvider(IHttpService httpService) : IExternalNo
 
     public async Task<bool> SendAsync(string title, string content)
     {
-        var botToken = ConfigurationHelper.GetValue(ConfigurationKeys.ExternalNotificationDiscordBotToken, string.Empty);
-        var userId = ConfigurationHelper.GetValue(ConfigurationKeys.ExternalNotificationDiscordUserId, string.Empty);
+        var botToken = SettingsViewModel.ExternalNotificationSettings.DiscordBotToken;
+        var userId = SettingsViewModel.ExternalNotificationSettings.DiscordUserId;
 
         var channelId = await CreateDmChannel(botToken, userId);
 
@@ -70,7 +69,7 @@ public class DiscordNotificationProvider(IHttpService httpService) : IExternalNo
             return null;
         }
 
-        _logger.Debug($"DM Channel created successfully. Channel ID: {channelId}");
+        _logger.Debug("DM Channel created successfully. Channel ID: {JsonElement}", channelId);
         return channelId.GetString();
     }
 

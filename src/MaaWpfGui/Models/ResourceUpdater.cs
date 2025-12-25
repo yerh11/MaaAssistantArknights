@@ -1,6 +1,6 @@
 // <copyright file="ResourceUpdater.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -10,411 +10,470 @@
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY
 // </copyright>
+
 #nullable enable
 
 using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Threading.Tasks;
-using System.Web;
 using MaaWpfGui.Constants;
+using MaaWpfGui.Constants.Enums;
+using MaaWpfGui.Extensions;
 using MaaWpfGui.Helper;
-using MaaWpfGui.Main;
-using MaaWpfGui.ViewModels;
-using Stylet;
+using MaaWpfGui.Utilities;
+using MaaWpfGui.ViewModels.UI;
+using MaaWpfGui.ViewModels.UserControl.Settings;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Serilog;
+using static MaaWpfGui.ViewModels.UI.VersionUpdateViewModel;
 
-namespace MaaWpfGui.Models
+namespace MaaWpfGui.Models;
+
+public static class ResourceUpdater
 {
-    public static class ResourceUpdater
+    private static readonly ILogger _logger = Log.ForContext("SourceContext", "ResourceUpdater");
+
+    public static async Task<bool> UpdateFromGithubAsync()
     {
-        private const string MaaResourceVersion = "resource/version.json";
-        private const string VersionChecksTemp = MaaResourceVersion + ".checks.tmp";
+        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdating"));
 
-        private static readonly List<string> _maaSingleFiles =
-        [
-            "resource/Arknights-Tile-Pos/overview.json",
-            "resource/stages.json",
-            "resource/recruitment.json",
-            "resource/item_index.json",
-            "resource/battle_data.json",
-            "resource/infrast.json",
-            "resource/global/YoStarJP/resource/recruitment.json",
-            "resource/global/YoStarJP/resource/item_index.json",
-            "resource/global/YoStarJP/resource/version.json",
-            "resource/global/YoStarEN/resource/recruitment.json",
-            "resource/global/YoStarEN/resource/item_index.json",
-            "resource/global/YoStarEN/resource/version.json",
-            "resource/global/txwy/resource/recruitment.json",
-            "resource/global/txwy/resource/item_index.json",
-            "resource/global/txwy/resource/version.json",
-            "resource/global/YoStarKR/resource/recruitment.json",
-            "resource/global/YoStarKR/resource/item_index.json",
-            "resource/global/YoStarKR/resource/version.json",
-        ];
-
-        private const string MaaDynamicFilesIndex = "resource/dynamic_list.txt";
-
-        public enum UpdateResult
+        if (!await DownloadFullPackageAsync(MaaUrls.GithubResourceUpdate, "MaaResourceGithub.zip", true).ConfigureAwait(false))
         {
-            /// <summary>
-            /// update resource success
-            /// </summary>
-            Success,
-
-            /// <summary>
-            /// update resource failed
-            /// </summary>
-            Failed,
-
-            /// <summary>
-            /// resource not modified
-            /// </summary>
-            NotModified,
+            Fail();
+            return false;
         }
 
-        // 只有 Release 版本才会检查更新
-        // ReSharper disable once UnusedMember.Global
-        public static async void UpdateAndToastAsync()
-        {
-            var ret = await UpdateAsync();
+        OutputDownloadProgress(downloading: false, output: LocalizationHelper.GetString("GameResourceUpdatePreparing"));
 
-            string toastMessage = ret switch
+        const string GithubZipFile = "MaaResourceGithub.zip";
+        const string ExtractFolder = "MaaResourceGithub";
+
+        // 解压到 MaaResource 文件夹
+        try
+        {
+            if (Directory.Exists(ExtractFolder))
             {
-                UpdateResult.Failed => LocalizationHelper.GetString("GameResourceFailed"),
-                UpdateResult.Success => LocalizationHelper.GetString("GameResourceUpdated"),
-                _ => string.Empty,
-            };
-            if (!string.IsNullOrEmpty(toastMessage))
-            {
-                _ = Execute.OnUIThreadAsync(() =>
-                {
-                    using var toast = new ToastNotification(toastMessage);
-                    toast.Show();
-                });
+                Directory.Delete(ExtractFolder, true);
             }
+
+            ZipFile.ExtractToDirectory(GithubZipFile, ExtractFolder);
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Failed to extract MaaResourceGithub.zip: " + e.Message);
+            Fail();
+            return false;
         }
 
-        private static async Task<string> GetResourceApiAsync()
+        // 把 \MaaResource-main 中的 resource 文件夹复制到当前目录
+        try
         {
-            string mirror = ConfigurationHelper.GetValue(ConfigurationKeys.ResourceApi, MaaUrls.MaaResourceApi);
-            if (mirror != MaaUrls.MaaResourceApi && await IsMirrorAccessibleAsync(mirror))
+            string basePath = Path.Combine(ExtractFolder, "MaaResource-main");
+            foreach (var folder in new[] { "resource" })
             {
-                return mirror;
+                DirectoryMerge(
+                    Path.Combine(basePath, folder),
+                    Path.Combine(PathsHelper.BaseDir, folder));
             }
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Failed to copy folders: " + e.Message);
+            Fail();
+            return false;
+        }
 
-            var mirrorList = new List<string>
+        // 删除 MaaResource 文件夹 和 MaaResource.zip
+        try
+        {
+            Directory.Delete(ExtractFolder, true);
+            File.Delete(GithubZipFile);
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Failed to delete MaaResource files: " + e.Message);
+        }
+
+        SettingsViewModel.VersionUpdateSettings.NewResourceFoundInfo = string.Empty;
+        OutputDownloadProgress(
+            downloading: false,
+            output: LocalizationHelper.GetString("GameResourceUpdated"),
+            toolTip: LocalizationHelper.GetString("ResourceUpdateTip"));
+        return true;
+
+        static void Fail()
+        {
+            string msg = LocalizationHelper.GetString("GameResourceFailed");
+            ToastNotification.ShowDirect(msg);
+            OutputDownloadProgress(downloading: false, output: msg);
+        }
+    }
+
+    /// <summary>
+    /// 从 MirrorChyan 检查更新
+    /// </summary>
+    /// <returns>返回一个 <see cref="CheckUpdateRetT"/> 枚举值，指示更新检查的结果。
+    /// <list type="bullet">
+    /// <item><description><see cref="CheckUpdateRetT.AlreadyLatest"/>：已是最新版本。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.OK"/>：有新版本。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.NoMirrorChyanCdk"/>：有新版本，但未填写 cdk</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.NetworkError"/>：网络错误。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.UnknownError"/>：其他错误。</description></item>
+    /// </list></returns>
+    public static async Task<(CheckUpdateRetT Ret, string? UpdateUrl, string? ReleaseNote)> CheckFromMirrorChyanAsync()
+    {
+        // https://mirrorc.top/api/resources/MaaResource/latest?current_version=<当前版本日期，从 version.json 里拿时间戳>&cdk=<cdk>&sp_id=<唯一识别码>
+        // 响应格式为 {"code":0,"msg":"success","data":{"version_name":"2025-01-22 14:28:32.839","version_number":9,"url":"<增量更新网址>"}}
+        const string BaseUrl = MaaUrls.MirrorChyanResourceUpdate;
+        var currentVersionDateTime = VersionUpdateSettingsUserControlModel
+            .GetResourceVersionByClientType(SettingsViewModel.GameSettings.ClientType)
+            .DateTime;
+        var currentVersion = currentVersionDateTime.ToString("yyyy-MM-dd+HH:mm:ss.fff");
+        var cdk = SettingsViewModel.VersionUpdateSettings.MirrorChyanCdk.Trim();
+        var spid = HardwareInfoUtility.GetMachineGuid().StableHash();
+
+        var url = $"{BaseUrl}?current_version={currentVersion}&cdk={cdk}&user_agent=MaaWpfGui&sp_id={spid}";
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            response = await Instances.HttpService.GetAsync(new(url), uriPartial: UriPartial.Path);
+        }
+        catch (Exception e)
+        {
+            _logger.Error(e, "Failed to send GET request to {Uri}", new Uri(url).GetLeftPart(UriPartial.Path));
+            _logger.Information("current_version: {CurrentVersion}, cdk: {Mask}", currentVersion, cdk.Mask());
+        }
+
+        if (response is null)
+        {
+            _logger.Error("mirrorc failed");
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = true;
+            return (CheckUpdateRetT.NetworkError, null, null);
+        }
+
+        var jsonStr = await response.Content.ReadAsStringAsync();
+        _logger.Information("{jsonStr}", jsonStr);
+        JObject? data = null;
+        try
+        {
+            data = (JObject?)JsonConvert.DeserializeObject(jsonStr);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to deserialize json.");
+        }
+
+        if (data is null)
+        {
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = true;
+            return (CheckUpdateRetT.UnknownError, null, null);
+        }
+
+        var mirrorChyanCdkExpired = data["data"]?["cdk_expired_time"]?.ToObject<long?>();
+
+        if (mirrorChyanCdkExpired.HasValue)
+        {
+            SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkExpiredTime = mirrorChyanCdkExpired.Value;
+            SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = false;
+        }
+        else
+        {
+            SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = true;
+        }
+
+        var errorCode = data["code"]?.ToObject<MirrorChyanErrorCode>() ?? MirrorChyanErrorCode.Undivided;
+        if (errorCode != MirrorChyanErrorCode.Success)
+        {
+            switch (errorCode)
             {
-                MaaUrls.S3ResourceApi,
-                MaaUrls.R2ResourceApi,
-                MaaUrls.AnnMirrorResourceApi,
-            };
+                case MirrorChyanErrorCode.KeyExpired:
+                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkExpired"));
 
-            while (mirrorList.Count != 0)
-            {
-                // random select a mirror
-                var index = new Random().Next(0, mirrorList.Count);
-                var mirrorUrl = mirrorList[index];
+                    SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = false;
 
-                if (await IsMirrorAccessibleAsync(mirrorUrl))
-                {
-                    mirror = mirrorUrl;
+                    // 有人会第一次就填过期的 cdk 吗
+                    if (SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkExpiredTime == 0)
+                    {
+                        SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkExpiredTime = 1;
+                    }
+
+                    // 如果上次查出来的时间比现在的还新，说明换了 cdk，重置过期时间
+                    if (!SettingsViewModel.VersionUpdateSettings.IsMirrorChyanCdkExpired)
+                    {
+                        SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkExpiredTime = mirrorChyanCdkExpired ?? 1;
+                    }
+
                     break;
-                }
-
-                mirrorList.RemoveAt(index);
+                case MirrorChyanErrorCode.KeyInvalid:
+                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkInvalid"));
+                    AchievementTrackerHelper.Instance.Unlock(AchievementIds.MirrorChyanCdkError);
+                    break;
+                case MirrorChyanErrorCode.ResourceQuotaExhausted:
+                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkQuotaExhausted"));
+                    break;
+                case MirrorChyanErrorCode.KeyMismatched:
+                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkMismatched"));
+                    break;
+                case MirrorChyanErrorCode.KeyBlocked:
+                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkBlocked"));
+                    break;
+                case MirrorChyanErrorCode.InvalidParams:
+                case MirrorChyanErrorCode.ResourceNotFound:
+                case MirrorChyanErrorCode.InvalidOs:
+                case MirrorChyanErrorCode.InvalidArch:
+                case MirrorChyanErrorCode.InvalidChannel:
+                case MirrorChyanErrorCode.Undivided:
+                    ToastNotification.ShowDirect(data["msg"]?.ToString() ?? LocalizationHelper.GetString("GameResourceFailed"));
+                    break;
             }
 
-            if (mirror != MaaUrls.MaaResourceApi)
-            {
-                ConfigurationHelper.SetValue(ConfigurationKeys.ResourceApi, mirror);
-            }
-
-            return mirror;
+            return (CheckUpdateRetT.UnknownError, null, null);
         }
 
-        private static async Task<bool> IsMirrorAccessibleAsync(string mirrorUrl)
+        if (!DateTime.TryParse(data["data"]?["version_name"]?.ToString(), out var versionTime))
         {
-            using var response = await Instances.HttpService.GetAsync(
-                new Uri(mirrorUrl + MaaResourceVersion),
-                httpCompletionOption: HttpCompletionOption.ResponseHeadersRead);
-
-            return response is
-            {
-                StatusCode: System.Net.HttpStatusCode.OK
-            };
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            return (CheckUpdateRetT.UnknownError, null, null);
         }
 
-        private static async Task<bool> CheckUpdateAsync(string baseUrl)
+        if (DateTime.Compare(currentVersionDateTime, versionTime) >= 0)
         {
-            var url = baseUrl + MaaResourceVersion;
-
-            using var response = await ETagCache.FetchResponseWithEtag(url);
-            if (response is not
-                {
-                    StatusCode: System.Net.HttpStatusCode.OK
-                })
-            {
-                return false;
-            }
-
-            var tmp = Path.Combine(Environment.CurrentDirectory, VersionChecksTemp);
-
-            if (!await HttpResponseHelper.SaveResponseToFileAsync(response, tmp))
-            {
-                return false;
-            }
-
-            _versionUrl = url;
-            _versionEtag = response.Headers.ETag?.Tag ?? string.Empty;
-            _ = Execute.OnUIThreadAsync(() =>
-            {
-                using var toast = new ToastNotification(LocalizationHelper.GetString("GameResourceUpdating"));
-                toast.Show();
-            });
-
-            return true;
+            return (CheckUpdateRetT.AlreadyLatest, null, null);
         }
 
-        private static string _versionUrl = string.Empty;
-        private static string _versionEtag = string.Empty;
+        // 到这里已经确定有新版本了
+        var releaseNote = data["data"]?["release_note"]?.ToString();
+        _logger.Information("New version found: {DateTime:yyyy-MM-dd+HH:mm:ss.fff}, {ReleaseNote}", versionTime, releaseNote);
 
-        private static void PostProcVersionChecks()
+        releaseNote = LocalizationHelper.FormatVersion(releaseNote, versionTime);
+
+        SettingsViewModel.VersionUpdateSettings.NewResourceFoundInfo = string.Format(LocalizationHelper.GetString("MirrorChyanResourceUpdateShortTip"), releaseNote);
+
+        if (string.IsNullOrEmpty(cdk))
         {
-            var tmp = Path.Combine(Environment.CurrentDirectory, VersionChecksTemp);
-            var version = Path.Combine(Environment.CurrentDirectory, MaaResourceVersion);
-
-            if (File.Exists(tmp))
-            {
-                File.Copy(tmp, version, true);
-                File.Delete(tmp);
-            }
-            else
-            {
-                return;
-            }
-
-            ETagCache.Set(_versionUrl, _versionEtag);
+            return (CheckUpdateRetT.NoMirrorChyanCdk, null, releaseNote);
         }
 
-        public static async Task<UpdateResult> UpdateAsync()
+        var uri = data["data"]?["url"]?.ToString();
+        if (!string.IsNullOrEmpty(uri))
         {
-            var baseUrl = await GetResourceApiAsync();
-            bool needUpdate = await CheckUpdateAsync(baseUrl);
-            if (!needUpdate)
-            {
-                return UpdateResult.NotModified;
-            }
-
-            OutputDownloadProgress(1, LocalizationHelper.GetString("GameResourceUpdatePreparing"));
-            var ret1 = await UpdateFilesWithIndexAsync(baseUrl);
-
-            if (ret1 == UpdateResult.Failed)
-            {
-                // 模板图片如果没更新成功，但是item_index.json更新成功了，这种情况会导致
-                // 下次启动时检查item_index发现对应的文件不存在，则会弹窗报错
-                // 所以如果模板图片没更新成功，干脆就不更新item_index.json了
-                // 地图数据等也是同理
-                return UpdateResult.Failed;
-            }
-
-            OutputDownloadProgress(2, LocalizationHelper.GetString("GameResourceUpdatePreparing"));
-            var ret2 = await UpdateSingleFilesAsync(baseUrl);
-
-            if (ret2 == UpdateResult.Failed)
-            {
-                return UpdateResult.Failed;
-            }
-
-            PostProcVersionChecks();
-
-            if (ret1 == UpdateResult.Success || ret2 == UpdateResult.Success)
-            {
-                OutputDownloadProgress(LocalizationHelper.GetString("GameResourceUpdated"));
-
-                // 现在用的和自动安装服更新包一个逻辑，看看有没有必要分开
-                if (Instances.SettingsViewModel.AutoInstallUpdatePackage)
-                {
-                    await Bootstrapper.RestartAfterIdleAsync();
-                }
-
-                return UpdateResult.Success;
-            }
-
-            OutputDownloadProgress(LocalizationHelper.GetString("GameResourceNotModified"));
-            return UpdateResult.NotModified;
+            return (CheckUpdateRetT.OK, uri, releaseNote);
         }
 
-        private static async Task<UpdateResult> UpdateSingleFilesAsync(string baseUrl, int maxRetryTime = 2)
+        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+        return (CheckUpdateRetT.UnknownError, null, null);
+    }
+
+    public static async Task<bool> DownloadFromMirrorChyanAsync(string? url, string? releaseNote)
+    {
+        if (string.IsNullOrEmpty(url))
         {
-            UpdateResult ret = UpdateResult.NotModified;
+            return false;
+        }
 
-            var maxCount = _maaSingleFiles.Count;
-            var count = 0;
+        ToastNotification.ShowDirect(string.Format(
+            LocalizationHelper.GetString("GameResourceUpdatingMirrorChyan"), releaseNote));
 
-            // TODO: 加个文件存这些文件的 hash，如果 hash 没变就不下载了，只需要请求一次
-            foreach (var file in _maaSingleFiles)
+        const string MirrorchyanZipFile = "MaaResourceMirrorchyan.zip";
+        const string ExtractFolder = "MaaResourceMirrorchyan";
+
+        OutputDownloadProgress(string.Empty, globalSource: false);
+        if (!await DownloadFullPackageAsync(url, MirrorchyanZipFile, false).ConfigureAwait(false))
+        {
+            Fail();
+            return false;
+        }
+
+        OutputDownloadProgress(downloading: false, output: LocalizationHelper.GetString("GameResourceUpdatePreparing"));
+
+        try
+        {
+            if (Directory.Exists(ExtractFolder))
             {
-                var sRet = await UpdateFileWithETagAsync(baseUrl, file, file, maxRetryTime);
-
-                if (sRet == UpdateResult.Failed)
-                {
-                    OutputDownloadProgress(LocalizationHelper.GetString("GameResourceFailed"));
-                    return UpdateResult.Failed;
-                }
-
-                OutputDownloadProgress(2, ++count, maxCount);
-                if (ret == UpdateResult.NotModified && sRet == UpdateResult.Success)
-                {
-                    ret = UpdateResult.Success;
-                }
+                Directory.Delete(ExtractFolder, true);
             }
 
-            OutputDownloadProgress(2, "Update completed");
+            ZipFile.ExtractToDirectory(MirrorchyanZipFile, ExtractFolder);
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Failed to extract MaaResourceMirrorchyan.zip: " + e.Message);
+            Fail();
+            return false;
+        }
+
+        try
+        {
+            DirectoryMerge(ExtractFolder, PathsHelper.BaseDir);
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Failed to copy folders: " + e.Message);
+            Fail();
+            return false;
+        }
+
+        try
+        {
+            Directory.Delete(ExtractFolder, true);
+            File.Delete(MirrorchyanZipFile);
+        }
+        catch (Exception e)
+        {
+            _logger.Error("Cleanup failed: " + e.Message);
+        }
+
+        SettingsViewModel.VersionUpdateSettings.NewResourceFoundInfo = string.Empty;
+        AchievementTrackerHelper.Instance.Unlock(AchievementIds.MirrorChyanFirstUse);
+        OutputDownloadProgress(
+            downloading: false,
+            output: LocalizationHelper.GetString("GameResourceUpdated"),
+            toolTip: LocalizationHelper.GetString("ResourceUpdateTip"));
+
+        return true;
+
+        static void Fail()
+        {
+            string msg = LocalizationHelper.GetString("GameResourceFailed");
+            ToastNotification.ShowDirect(msg);
+            OutputDownloadProgress(downloading: false, output: msg);
+        }
+    }
+
+    /// <summary>
+    /// 检查并下载资源更新。
+    /// </summary>
+    /// <returns>返回一个 <see cref="CheckUpdateRetT"/> 枚举值，指示更新检查和下载的结果。
+    /// <list type="bullet">
+    /// <item><description><see cref="CheckUpdateRetT.AlreadyLatest"/>：已是最新版本。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.OK"/>：有新版本。（海外源不会自动下载）</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.NoMirrorChyanCdk"/>：有新版本，但未填写 cdk</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.OnlyGameResourceUpdated"/>：下载成功。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.NetworkError"/>：网络错误。</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.UnknownError"/>：其他错误。</description></item>
+    /// </list></returns>
+    public static async Task<CheckUpdateRetT> CheckAndDownloadResourceUpdate()
+    {
+        try
+        {
+            SettingsViewModel.VersionUpdateSettings.IsCheckingForUpdates = true;
+
+            var (ret, uri, releaseNote) = await CheckFromMirrorChyanAsync();
+            if (ret == CheckUpdateRetT.NoMirrorChyanCdk)
+            {
+                ToastNotification.ShowDirect(string.Format(LocalizationHelper.GetString("MirrorChyanResourceUpdateTip"), releaseNote));
+            }
+
+            if (ret != CheckUpdateRetT.OK)
+            {
+                return ret;
+            }
+
+            if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" &&
+                await DownloadFromMirrorChyanAsync(uri, releaseNote))
+            {
+                return CheckUpdateRetT.OnlyGameResourceUpdated;
+            }
+
             return ret;
         }
-
-        // 地图文件、掉落材料的图片、基建技能图片
-        // 这些文件数量不固定，需要先获取索引文件，再根据索引文件下载
-        private static async Task<UpdateResult> UpdateFilesWithIndexAsync(string baseUrl, int maxRetryTime = 2)
+        finally
         {
-            var indexSRet = await UpdateFileWithETagAsync(baseUrl, MaaDynamicFilesIndex, MaaDynamicFilesIndex, maxRetryTime);
-            if (indexSRet == UpdateResult.Failed)
-            {
-                return UpdateResult.Failed;
-            }
+            SettingsViewModel.VersionUpdateSettings.IsCheckingForUpdates = false;
+        }
+    }
 
-            var indexPath = Path.Combine(Environment.CurrentDirectory, MaaDynamicFilesIndex);
-            if (!File.Exists(indexPath))
-            {
-                return UpdateResult.Failed;
-            }
-
-            var ret = UpdateResult.NotModified;
-            var context = await File.ReadAllTextAsync(indexPath);
-            var maxCount = context
-                .Split('\n')
-                .ToList()
-                .Where(file => !string.IsNullOrEmpty(file))
-                .Count(file => !File.Exists(Path.Combine(Environment.CurrentDirectory, file)));
-            var count = 0;
-
-            foreach (var file in context.Split('\n').ToList()
-                         .Where(file => !string.IsNullOrEmpty(file))
-                         .Where(file => !File.Exists(Path.Combine(Environment.CurrentDirectory, file))))
-            {
-                var sRet = await UpdateFileWithETagAsync(baseUrl, file, file, maxRetryTime);
-                if (sRet == UpdateResult.Failed)
-                {
-                    OutputDownloadProgress(LocalizationHelper.GetString("GameResourceFailed"));
-                    return UpdateResult.Failed;
-                }
-
-                OutputDownloadProgress(1, ++count, maxCount);
-                if (ret == UpdateResult.NotModified && sRet == UpdateResult.Success)
-                {
-                    ret = UpdateResult.Success;
-                }
-            }
-
-            OutputDownloadProgress(1, "Update completed");
-            return ret;
+    public static async Task ResourceUpdateAndReloadAsync()
+    {
+        if (SettingsViewModel.VersionUpdateSettings.IsCheckingForUpdates)
+        {
+            return;
         }
 
-        private static UpdateResult ResponseToUpdateResult(HttpResponseMessage? response)
+        var ret = await CheckAndDownloadResourceUpdate();
+        if (ret == CheckUpdateRetT.OnlyGameResourceUpdated)
         {
-            if (response == null)
-            {
-                return UpdateResult.Failed;
-            }
+            _ = ResourceReloadWhenIdleAsync();
+        }
+    }
 
-            if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
-            {
-                return UpdateResult.NotModified;
-            }
+    public static void ResourceReload()
+    {
+        Instances.AsstProxy.LoadResource();
+        DataHelper.Reload();
+        SettingsViewModel.VersionUpdateSettings.ResourceInfoUpdate();
+        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdated"));
+    }
 
-            return response.StatusCode == System.Net.HttpStatusCode.OK
-                ? UpdateResult.Success
-                : UpdateResult.Failed;
+    private static bool _isReloading = false;
+
+    public static async Task ResourceReloadWhenIdleAsync()
+    {
+        if (_isReloading)
+        {
+            _logger.Information("Resource is already reloading, skip this request.");
+            return;
         }
 
-        private static async Task<UpdateResult> UpdateFileWithETagAsync(string baseUrl, string file, string saveTo, int maxRetryTime = 0)
-        {
-            saveTo = Path.Combine(Environment.CurrentDirectory, saveTo);
-            var encodedFilePath = string.Join('/', file.Split('/').Select(HttpUtility.UrlEncode));
-            var url = baseUrl + encodedFilePath;
+        _isReloading = true;
+        await Instances.AsstProxy.LoadResourceWhenIdleAsync();
+        DataHelper.Reload();
+        SettingsViewModel.VersionUpdateSettings.ResourceInfoUpdate();
+        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdated"));
+        _isReloading = false;
+    }
 
-            int retryCount = 0;
-            UpdateResult updateResult;
-            do
+    private static async Task<bool> DownloadFullPackageAsync(string url, string saveTo, bool globalSource)
+    {
+        try
+        {
+            return await Instances.HttpService.DownloadFileAsync(new(url), saveTo, "application/zip");
+        }
+        catch (Exception e)
+        {
+            _logger.Error(e, "Failed to send GET request to {Uri}", url);
+            OutputDownloadProgress(downloading: false, output: LocalizationHelper.GetString("GameResourceFailed"), globalSource: globalSource);
+            return false;
+        }
+    }
+
+    private static void DirectoryMerge(string sourceDirName, string destDirName)
+    {
+        DirectoryInfo dir = new DirectoryInfo(sourceDirName);
+        DirectoryInfo[] dirs = dir.GetDirectories();
+
+        if (!dir.Exists)
+        {
+            throw new DirectoryNotFoundException("Source directory does not exist or could not be found: " + sourceDirName);
+        }
+
+        if (!Directory.Exists(destDirName))
+        {
+            Directory.CreateDirectory(destDirName);
+        }
+
+        FileInfo[] files = dir.GetFiles();
+        foreach (FileInfo file in files)
+        {
+            if (file.Name == ".gitignore")
             {
-                using var response = await ETagCache.FetchResponseWithEtag(url, !File.Exists(saveTo));
-                updateResult = ResponseToUpdateResult(response);
-
-                switch (updateResult)
-                {
-                    case UpdateResult.Success
-                        when !await HttpResponseHelper.SaveResponseToFileAsync(response, saveTo):
-                        return UpdateResult.Failed;
-                    case UpdateResult.Success:
-                        ETagCache.Set(response);
-                        return UpdateResult.Success;
-                    case UpdateResult.NotModified:
-                        return UpdateResult.NotModified;
-                    case UpdateResult.Failed:
-                    default:
-                        await Task.Delay(5000);
-                        break;
-                }
-            }
-            while (retryCount++ < maxRetryTime);
-
-            return updateResult;
-        }
-
-        private static ObservableCollection<LogItemViewModel> _logItemViewModels = [];
-
-        private static void OutputDownloadProgress(int index, int count = 0, int maxCount = 1)
-        {
-            OutputDownloadProgress(index, $"{count}/{maxCount}({100 * count / maxCount}%)");
-        }
-
-        private static void OutputDownloadProgress(int index, string output)
-        {
-            OutputDownloadProgress($"index {index}/2: {output}");
-        }
-
-        private static void OutputDownloadProgress(string output)
-        {
-            _logItemViewModels = Instances.TaskQueueViewModel.LogItemViewModels;
-            if (_logItemViewModels == null)
-            {
-                return;
+                continue;
             }
 
-            var log = new LogItemViewModel(LocalizationHelper.GetString("GameResourceUpdating") + "\n" + output, UiLogColor.Download);
+            string tempPath = Path.Combine(destDirName, file.Name);
+            file.CopyTo(tempPath, true); // 覆盖现有文件
+        }
 
-            Execute.OnUIThread(() =>
-            {
-                if (_logItemViewModels.Count > 0 && _logItemViewModels[0].Color == UiLogColor.Download)
-                {
-                    if (!string.IsNullOrEmpty(output))
-                    {
-                        _logItemViewModels[0] = log;
-                    }
-                    else
-                    {
-                        _logItemViewModels.RemoveAt(0);
-                    }
-                }
-                else if (!string.IsNullOrEmpty(output))
-                {
-                    _logItemViewModels.Clear();
-                    _logItemViewModels.Add(log);
-                }
-            });
+        foreach (DirectoryInfo subDir in dirs)
+        {
+            string tempPath = Path.Combine(destDirName, subDir.Name);
+            DirectoryMerge(subDir.FullName, tempPath);
         }
     }
 }

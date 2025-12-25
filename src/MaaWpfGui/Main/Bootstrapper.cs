@@ -1,6 +1,6 @@
 // <copyright file="Bootstrapper.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -12,285 +12,734 @@
 // </copyright>
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using GlobalHotKey;
+using MaaWpfGui.Configuration.Factory;
+using MaaWpfGui.Constants;
 using MaaWpfGui.Helper;
+using MaaWpfGui.Properties;
 using MaaWpfGui.Services;
 using MaaWpfGui.Services.HotKeys;
 using MaaWpfGui.Services.Managers;
 using MaaWpfGui.Services.RemoteControl;
 using MaaWpfGui.Services.Web;
 using MaaWpfGui.States;
+using MaaWpfGui.Utilities;
 using MaaWpfGui.ViewModels.UI;
+using MaaWpfGui.ViewModels.UserControl.Settings;
 using MaaWpfGui.Views.UI;
 using MaaWpfGui.WineCompat;
+using Microsoft.Win32;
 using Serilog;
 using Serilog.Core;
+using Serilog.Events;
 using Stylet;
 using StyletIoC;
+using static MaaWpfGui.States.RunningState;
 
-namespace MaaWpfGui.Main
+namespace MaaWpfGui.Main;
+
+/// <summary>
+/// The bootstrapper.
+/// </summary>
+public class Bootstrapper : Bootstrapper<RootViewModel>
 {
-    /// <summary>
-    /// The bootstrapper.
-    /// </summary>
-    public class Bootstrapper : Bootstrapper<RootViewModel>
+    private static ILogger _logger = Logger.None;
+
+    private static Mutex _mutex;
+    private static bool _hasMutex;
+
+    public static readonly string UiLogFile = Path.Combine(PathsHelper.DebugDir, "gui.log");
+    public static readonly string UiLogBakFile = Path.Combine(PathsHelper.DebugDir, "gui.bak.log");
+    public static readonly string CoreLogFile = Path.Combine(PathsHelper.DebugDir, "asst.log");
+    public static readonly string CoreLogBakFile = Path.Combine(PathsHelper.DebugDir, "asst.bak.log");
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr LoadLibrary(string dllName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    private static extern bool FreeLibrary(IntPtr hModule);
+
+    private static List<string> UnknownDllDetected()
     {
-        private static readonly RunningState _runningState = RunningState.Instance;
-        private static ILogger _logger = Logger.None;
-
-        // private static Mutex _mutex;
-
-        /// <inheritdoc/>
-        /// <remarks>初始化些啥自己加。</remarks>
-        protected override void OnStart()
+        try
         {
-            /*
-            // 设置互斥量的名称
-            string mutexName = "MAA_" + Directory.GetCurrentDirectory().Replace("\\", "_").Replace(":", string.Empty);
-            _mutex = new Mutex(true, mutexName);
-
-            if (!_mutex.WaitOne(TimeSpan.Zero, true))
+            // 属于 MAA 的 DLL 列表
+            // 因为经常有人把 MAA 和别的东西解压到一起然后发生 DLL 劫持然后报错，遂检测
+            var maaDlls = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                // 这里还没加载语言包，就不 GetString 了
-                MessageBox.Show("同一路径下只能启动一个实例！\n\n" +
-                                "同一路徑下只能啟動一個實例！\n\n" +
-                                "Only one instance can be launched under the same path!\n\n" +
-                                "同じパスの下で1つのインスタンスしか起動できません！\n\n" +
-                                "동일한 경로에는 하나의 인스턴스만 실행할 수 있습니다!");
-                Bootstrapper.Shutdown();
+                "libloader.dll",
+                "DirectML.dll",
+                "fastdeploy_ppocr.dll",
+                "MaaCore.dll",
+                "onnxruntime_maa.dll",
+                "opencv_world4_maa.dll",
+            };
+
+            var currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            var dllFiles = Directory.GetFiles(currentDirectory, "*.dll");
+
+            return [.. dllFiles
+                .Select(Path.GetFileName)
+                .Where(fileName => !maaDlls.Contains(fileName) && !fileName.Contains("maa", StringComparison.OrdinalIgnoreCase))];
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+    }
+
+    private static bool IsVCppInstalled()
+    {
+        IntPtr handle = IntPtr.Zero;
+        try
+        {
+            handle = LoadLibrary("MaaCore.dll");
+
+            // 如果句柄非空，说明 DLL 存在且可加载
+            return handle != IntPtr.Zero;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+        finally
+        {
+            if (handle != IntPtr.Zero)
+            {
+                FreeLibrary(handle); // 释放 DLL 句柄
+            }
+        }
+    }
+
+    public static bool IsWritable(string path)
+    {
+        try
+        {
+            string testFile = Path.Combine(path, "write_test.tmp");
+            File.WriteAllText(testFile, "test");
+            File.Delete(testFile);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static void ParseCrashLog()
+    {
+        var crashFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log");
+        if (!File.Exists(crashFile))
+        {
+            return;
+        }
+
+        try
+        {
+            string[] lines = File.ReadAllLines(crashFile, Encoding.UTF8);
+
+            StringBuilder message = new StringBuilder();
+            string currentReason = null;
+            string currentDetail = null;
+
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("Reason: "))
+                {
+                    currentReason = line[7..].Trim();
+                }
+                else if (line.StartsWith("Detail: "))
+                {
+                    currentDetail = line[8..].Trim();
+                }
+                else if (line.StartsWith("==================="))
+                {
+                    if (!string.IsNullOrEmpty(currentReason))
+                    {
+                        message.AppendLine($"Reason: {currentReason}");
+                        if (!string.IsNullOrEmpty(currentDetail))
+                        {
+                            message.AppendLine($"Detail: {currentDetail}");
+                        }
+
+                        message.AppendLine();
+                    }
+
+                    currentReason = null;
+                    currentDetail = null;
+                }
+            }
+
+            if (message.Length > 0)
+            {
+                message.AppendLine(LocalizationHelper.GetString("ErrorCrashMessageHeader"));
+                message.AppendLine();
+                message.AppendLine(LocalizationHelper.GetString("ErrorCrashMessageOpenLog"));
+                message.AppendLine(LocalizationHelper.GetString("ErrorCrashMessageGenerateReport"));
+                message.AppendLine();
+                message.AppendLine(LocalizationHelper.GetString("ErrorCrashMessageHelpTip"));
+
+                _logger.Warning(message.ToString());
+
+                MessageBoxHelper.Show(
+                    message.ToString(),
+                    LocalizationHelper.GetString("ErrorCrashDialogTitle"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+
+                try
+                {
+                    File.Delete(crashFile);
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>初始化些啥自己加。</remarks>
+    protected override void OnStart()
+    {
+        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+        if (!Directory.Exists("debug"))
+        {
+            Directory.CreateDirectory("debug");
+        }
+
+        if (File.Exists(UiLogFile) && new FileInfo(UiLogFile).Length > 4 * 1024 * 1024)
+        {
+            if (File.Exists(UiLogBakFile))
+            {
+                File.Delete(UiLogBakFile);
+            }
+
+            File.Move(UiLogFile, UiLogBakFile);
+        }
+
+        // Bootstrap serilog
+        var loggerConfiguration = new LoggerConfiguration()
+            .WriteTo.Debug(outputTemplate: "[{Timestamp:HH:mm:ss}][{Level:u3}]{ClassName} <{ThreadId}> {Message:lj}{NewLine}{Exception}")
+            .WriteTo.File(
+                UiLogFile,
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}][{Level:u3}]{ClassName} <{ThreadId}> {Message:lj}{NewLine}{Exception}")
+            .Enrich.With<ClassNameEnricher>()
+            .Enrich.FromLogContext()
+            .Enrich.WithThreadId()
+            .Enrich.WithThreadName();
+
+        var uiVersion = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.1";
+        uiVersion = uiVersion == "0.0.1" ? "DEBUG VERSION" : uiVersion;
+        var builtDate = Assembly.GetExecutingAssembly().GetCustomAttribute<BuildDateTimeAttribute>()?.BuildDateTime ?? DateTime.MinValue;
+        var maaEnv = Environment.GetEnvironmentVariable("MAA_ENVIRONMENT") == "Debug"
+            ? "Debug"
+            : "Production";
+        var args = Environment.GetCommandLineArgs();
+        var withDebugFile = File.Exists("DEBUG") || File.Exists("DEBUG.txt");
+        loggerConfiguration = (maaEnv == "Debug" || withDebugFile)
+            ? loggerConfiguration.MinimumLevel.Verbose()
+            : loggerConfiguration.MinimumLevel.Information();
+        var workingDirectory = PathsHelper.BaseDir;
+        var folderName = Path.GetFileName(workingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var isBuildOutputFolder =
+            string.Equals(folderName, "Release", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(folderName, "Debug", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(folderName, "RelWithDebInfo", StringComparison.OrdinalIgnoreCase);
+
+        Log.Logger = loggerConfiguration.CreateLogger();
+        _logger = Log.Logger.ForContext<Bootstrapper>();
+        _logger.Information("===================================");
+        _logger.Information("MaaAssistantArknights GUI started");
+        _logger.Information("Version {UiVersion}", uiVersion);
+        _logger.Information("Built at {BuiltDate:O}", builtDate);
+        _logger.Information("Maa ENV: {MaaEnv}", maaEnv);
+        _logger.Information("Command Line: {Join}", string.Join(' ', args));
+        _logger.Information("User Dir {BaseDirectory}", workingDirectory);
+        if (withDebugFile)
+        {
+            _logger.Information("Start with DEBUG file");
+        }
+
+        if (IsAdministratorWithUac())
+        {
+            _logger.Information("Run as Administrator");
+        }
+
+        if (WineRuntimeInformation.IsRunningUnderWine)
+        {
+            _logger.Information("Running under Wine {WineVersion} on {HostSystemName}", WineRuntimeInformation.WineVersion, WineRuntimeInformation.HostSystemName);
+            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+            _logger.Information("MaaWineBridge status: {WineBridgeAvailability}", MaaWineBridge.Availability);
+            _logger.Information("MaaDesktopIntegration available: {Available}", MaaDesktopIntegration.Available);
+        }
+
+        _logger.Information("===================================");
+
+        ConfigurationHelper.Load();
+        LocalizationHelper.Load();
+        ETagCache.Load();
+
+        // 检查 MaaCore.dll 是否存在
+        if (!File.Exists("MaaCore.dll"))
+        {
+            throw new FileNotFoundException("MaaCore.dll not found!");
+        }
+
+        // 检查 resource 文件夹是否存在
+        if (!Directory.Exists(PathsHelper.ResourceDir))
+        {
+            throw new DirectoryNotFoundException("resource folder not found!");
+        }
+
+        // Debug 模式下 DLL 是未打包的
+        if (maaEnv != "Debug" && !isBuildOutputFolder)
+        {
+            var unknownDlls = UnknownDllDetected();
+            if (unknownDlls.Count > 0)
+            {
+                MessageBoxHelper.Show(
+                    LocalizationHelper.GetString("UnknownDllDetected") + "\n" + string.Join("\n", unknownDlls),
+                    "MAA",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                _logger.Fatal("Unknown DLL(s) detected: {UnknownDlls}", string.Join(", ", unknownDlls));
+                Shutdown();
                 return;
             }
-            */
+        }
 
-            Directory.SetCurrentDirectory(AppContext.BaseDirectory);
-            if (Directory.Exists("debug") is false)
+        if (!IsVCppInstalled())
+        {
+            var ret = MessageBoxHelper.Show(
+                LocalizationHelper.GetString("VC++NotInstalled"),
+                "MAA",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Information,
+                ok: LocalizationHelper.GetString("Confirm"),
+                cancel: LocalizationHelper.GetString("Cancel"));
+            if (ret == MessageBoxResult.OK)
             {
-                Directory.CreateDirectory("debug");
+                var startInfo = new ProcessStartInfo {
+                    FileName = "DependencySetup_依赖库安装.bat",
+                    WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory, // 设置工作目录
+                    WindowStyle = ProcessWindowStyle.Normal, // 显示窗口让用户看到进度
+                };
+
+                Process.Start(startInfo);
             }
 
-            const string LogFilename = "debug/gui.log";
-            const string LogBakFilename = "debug/gui.bak.log";
-            if (File.Exists(LogFilename) && new FileInfo(LogFilename).Length > 4 * 1024 * 1024)
-            {
-                if (File.Exists(LogBakFilename))
-                {
-                    File.Delete(LogBakFilename);
-                }
+            Shutdown();
+            return;
+        }
 
-                File.Move(LogFilename, LogBakFilename);
+        if (!HandleMultipleInstances())
+        {
+            Shutdown();
+            return;
+        }
+
+        if (!IsWritable(PathsHelper.BaseDir))
+        {
+            Task.Run(() => MessageBoxHelper.Show(LocalizationHelper.GetString("SoftwareLocationWarning"), LocalizationHelper.GetString("Error"), MessageBoxButton.OK, MessageBoxImage.Error));
+        }
+
+        Task.Run(ParseCrashLog);
+
+        base.OnStart();
+        _hasMutex = true;
+
+        const string ConfigFlag = "--config";
+        const string AnotherFlag = "--another"; // 示例，之后如果有其他参数，可以继续添加
+
+        var parsedArgs = ParseArgs(args, ConfigFlag, AnotherFlag);
+
+        if (parsedArgs.TryGetValue(ConfigFlag, out string configArgs) && Config(configArgs))
+        {
+            // return;
+        }
+    }
+
+    public class ClassNameEnricher : ILogEventEnricher
+    {
+        public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory)
+        {
+            if (!logEvent.Properties.TryGetValue("SourceContext", out var sourceContextValue))
+            {
+                return;
             }
 
-            // Bootstrap serilog
-            var loggerConfiguration = new LoggerConfiguration()
-                .WriteTo.Debug(
-                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] <{ThreadId}><{ThreadName}> {Message:lj}{NewLine}{Exception}")
-                .WriteTo.File(
-                    LogFilename,
-                    outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] <{ThreadId}><{ThreadName}> {Message:lj}{NewLine}{Exception}")
-                .Enrich.FromLogContext()
-                .Enrich.WithThreadId()
-                .Enrich.WithThreadName();
+            var sourceContext = sourceContextValue.ToString().Trim('"');
+            var className = sourceContext.Split('.').Last();
+            className = ("[" + className + "]").PadRight(24);
+            logEvent.AddOrUpdateProperty(propertyFactory.CreateProperty("ClassName", className));
+        }
+    }
 
-            var uiVersion = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.1";
-            uiVersion = uiVersion == "0.0.1" ? "DEBUG VERSION" : uiVersion;
-            var maaEnv = Environment.GetEnvironmentVariable("MAA_ENVIRONMENT") == "Debug"
-                ? "Debug"
-                : "Production";
-            loggerConfiguration = maaEnv == "Debug"
-                ? loggerConfiguration.MinimumLevel.Verbose()
-                : loggerConfiguration.MinimumLevel.Information();
+    protected override void OnLaunch()
+    {
+        BadModules.CheckAndWarnBadInjectedModules();
+    }
 
-            Log.Logger = loggerConfiguration.CreateLogger();
-            _logger = Log.Logger.ForContext<Bootstrapper>();
-            _logger.Information("===================================");
-            _logger.Information("MaaAssistantArknights GUI started");
-            _logger.Information("Version {UiVersion}", uiVersion);
-            _logger.Information("Maa ENV: {MaaEnv}", maaEnv);
-            _logger.Information("User Dir {CurrentDirectory}", Directory.GetCurrentDirectory());
-            if (IsUserAdministrator())
+    private static bool HandleMultipleInstances()
+    {
+        // 设置互斥量的名称
+        string mutexName = "MAA_" + PathsHelper.BaseDir.Replace("\\", "_").Replace(":", string.Empty);
+        _mutex = new Mutex(true, mutexName, out var isOnlyInstance);
+
+        try
+        {
+            if (isOnlyInstance || _mutex.WaitOne(500))
             {
-                _logger.Information("Run as Administrator");
+                return true;
             }
 
-            if (WineRuntimeInformation.IsRunningUnderWine)
+            MessageBoxHelper.Show(LocalizationHelper.GetString("MultiInstanceUnderSamePath"), "MAA", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+        catch (AbandonedMutexException)
+        {
+            // 上一个程序没有正常释放互斥量
+            // 即使捕获到这个异常，此时也已经获得了锁
+            return true;
+        }
+        catch (Exception e)
+        {
+            MessageBoxHelper.Show(LocalizationHelper.GetString("MultiInstanceUnderSamePath") + e.Message, "MAA", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+    }
+
+    public static bool IsUserAdministrator() => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+
+    public static bool IsUacEnabled()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System");
+            if (key == null)
             {
-                _logger.Information($"Running under Wine {WineRuntimeInformation.WineVersion} on {WineRuntimeInformation.HostSystemName}");
-                RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
-                _logger.Information($"MaaWineBridge status: {MaaWineBridge.Availability}");
-                _logger.Information($"MaaDesktopIntegration available: {MaaDesktopIntegration.Availabile}");
+                return true;
             }
 
-            _logger.Information("===================================");
+            var value = key.GetValue("EnableLUA");
+            if (value is int intValue)
+            {
+                return intValue != 0;
+            }
 
+            return true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    public static bool IsAdministratorWithUac() => IsUserAdministrator() && IsUacEnabled();
+
+    /// <inheritdoc/>
+    protected override void ConfigureIoC(IStyletIoCBuilder builder)
+    {
+        builder.Bind<TaskQueueViewModel>().ToSelf().InSingletonScope();
+        builder.Bind<CopilotViewModel>().ToSelf().InSingletonScope();
+        builder.Bind<ToolboxViewModel>().ToSelf().InSingletonScope();
+        builder.Bind<SettingsViewModel>().ToSelf().InSingletonScope();
+
+        builder.Bind<AsstProxy>().ToSelf().InSingletonScope();
+        builder.Bind<StageManager>().ToSelf().InSingletonScope();
+
+        builder.Bind<HotKeyManager>().ToSelf().InSingletonScope();
+
+        builder.Bind<IMaaHotKeyManager>().To<MaaHotKeyManager>().InSingletonScope();
+        builder.Bind<IMaaHotKeyActionHandler>().To<MaaHotKeyActionHandler>().InSingletonScope();
+
+        builder.Bind<RemoteControlService>().To<RemoteControlService>().InSingletonScope();
+
+        builder.Bind<IMainWindowManager>().To<MainWindowManager>().InSingletonScope();
+
+        builder.Bind<IHttpService>().To<HttpService>().InSingletonScope();
+        builder.Bind<IMaaApiService>().To<MaaApiService>().InSingletonScope();
+
+        builder.Bind<OverlayViewModel>().ToSelf().InSingletonScope();
+    }
+
+    protected override void Configure()
+    {
+        base.Configure();
+        Instances.Instantiate(Container);
+    }
+
+    /// <inheritdoc/>
+    protected override void DisplayRootView(object rootViewModel)
+    {
+        if (Application.Current.IsShuttingDown())
+        {
+            return;
+        }
+
+        bool wasFirstBoot = Instances.VersionUpdateViewModel.IsFirstBootAfterUpdate;
+
+        Instances.WindowManager.ShowWindow(rootViewModel);
+        Instances.InstantiateOnRootViewDisplayed(Container);
+
+        // 如果 IsFirstBootAfterUpdate 从 false 变为 true，说明这次启动只是解压更新包，不用执行后续逻辑
+        if (!wasFirstBoot && Instances.VersionUpdateViewModel.IsFirstBootAfterUpdate)
+        {
+            return;
+        }
+
+        AchievementTrackerHelper.Events.Startup();
+
+        var buildTimeInterval = (DateTime.UtcNow - VersionUpdateSettingsUserControlModel.BuildDateTime).TotalDays;
+        var resourceTimeInterval = (DateTime.UtcNow - SettingsViewModel.VersionUpdateSettings.ResourceDateTime).TotalDays;
+        var maxTimeInterval = Math.Max(buildTimeInterval, resourceTimeInterval);
+        if (maxTimeInterval > 90)
+        {
+            Instances.TaskQueueViewModel.LogItemViewModels.Add(new(string.Format(LocalizationHelper.GetString("Achievement.Martian.ConditionsTip"), (maxTimeInterval / 30.436875).ToString("F2")), UiLogColor.Error));
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>退出时执行啥自己加。</remarks>
+    protected override void OnExit(ExitEventArgs e)
+    {
+        // MessageBox.Show("O(∩_∩)O 拜拜");
+        try
+        {
+            Instances.TaskQueueViewModel.ResetAllTemporaryVariable();
+        }
+        catch
+        {
+            // ignored
+        }
+
+        Release();
+
+        _logger.Information("MaaAssistantArknights GUI exited");
+        _logger.Information("{Message}", string.Empty);
+        Log.CloseAndFlush();
+        base.OnExit(e);
+
+        if (!_isRestartingAfterUpdate)
+        { // 如果是更新后重启，则不删除 .old
             try
-            {
+            { // 退出时移除.old
                 Directory.Delete(".old", true);
             }
             catch (Exception)
-            {
-                // ignored
+            { // ignored
             }
 
-            foreach (var file in new DirectoryInfo(".").GetFiles("*.old"))
+            foreach (var file in new DirectoryInfo(".").EnumerateFiles("*.old"))
             {
                 try
                 {
                     file.Delete();
                 }
                 catch (Exception)
-                {
-                    // ignored
+                { // ignored
                 }
             }
 
-            base.OnStart();
-            ConfigurationHelper.Load();
-            LocalizationHelper.Load();
-            ETagCache.Load();
-        }
-
-        private static bool IsUserAdministrator()
-        {
-            WindowsIdentity identity = WindowsIdentity.GetCurrent();
-            WindowsPrincipal principal = new WindowsPrincipal(identity);
-            SecurityIdentifier adminSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-
-            return principal.IsInRole(adminSid);
-        }
-
-        /// <inheritdoc/>
-        protected override void ConfigureIoC(IStyletIoCBuilder builder)
-        {
-            builder.Bind<TaskQueueViewModel>().ToSelf().InSingletonScope();
-            builder.Bind<RecognizerViewModel>().ToSelf().InSingletonScope();
-            builder.Bind<SettingsViewModel>().ToSelf().InSingletonScope();
-            builder.Bind<CopilotViewModel>().ToSelf().InSingletonScope();
-
-            builder.Bind<AsstProxy>().ToSelf().InSingletonScope();
-            builder.Bind<StageManager>().ToSelf();
-
-            builder.Bind<HotKeyManager>().ToSelf().InSingletonScope();
-
-            builder.Bind<IMaaHotKeyManager>().To<MaaHotKeyManager>().InSingletonScope();
-            builder.Bind<IMaaHotKeyActionHandler>().To<MaaHotKeyActionHandler>().InSingletonScope();
-
-            builder.Bind<RemoteControlService>().To<RemoteControlService>().InSingletonScope();
-
-            builder.Bind<IMainWindowManager>().To<MainWindowManager>().InSingletonScope();
-
-            builder.Bind<IHttpService>().To<HttpService>().InSingletonScope();
-            builder.Bind<IMaaApiService>().To<MaaApiService>().InSingletonScope();
-        }
-
-        protected override void Configure()
-        {
-            base.Configure();
-            Instances.Instantiate(Container);
-        }
-
-        /// <inheritdoc/>
-        protected override void DisplayRootView(object rootViewModel)
-        {
-            Instances.WindowManager.ShowWindow(rootViewModel);
-            Instances.InstantiateOnRootViewDisplayed(Container);
-        }
-
-        /// <inheritdoc/>
-        /// <remarks>退出时执行啥自己加。</remarks>
-        protected override void OnExit(ExitEventArgs e)
-        {
-            /*
-             // 释放互斥量
-            _mutex?.ReleaseMutex();
-            _mutex?.Dispose();
-            */
-
-            // MessageBox.Show("O(∩_∩)O 拜拜");
-            ETagCache.Save();
-            Instances.SettingsViewModel.Sober();
-            Instances.MaaHotKeyManager.Release();
-
-            // 关闭程序时清理操作中心中的通知
-            ToastNotification.Cleanup();
-
-            ConfigurationHelper.Release();
-
-            _logger.Information("MaaAssistantArknights GUI exited");
-            _logger.Information(string.Empty);
-            Log.CloseAndFlush();
-            base.OnExit(e);
-
-            if (!_isRestartingWithoutArgs)
+            // 清理残留的 OTA 更新包临时文件
+            foreach (var file in new DirectoryInfo(".").EnumerateFiles("MAAComponent-OTA*.temp"))
             {
-                return;
+                try
+                {
+                    file.Delete();
+                }
+                catch (Exception)
+                { // ignored
+                }
             }
-
-            if (Environment.ProcessPath is null)
-            {
-                return;
-            }
-
-            ProcessStartInfo startInfo = new ProcessStartInfo
-            {
-                FileName = Environment.ProcessPath,
-            };
-
-            Process.Start(startInfo);
         }
 
-        private static bool _isRestartingWithoutArgs;
-
-        /// <summary>
-        /// 重启，不带参数
-        /// </summary>
-        public static void ShutdownAndRestartWithoutArgs()
+        if (!_isRestartingWithoutArgs)
         {
-            _isRestartingWithoutArgs = true;
-            _logger.Information("Shutdown and restart without Args");
-            Execute.OnUIThread(Application.Current.Shutdown);
+            return;
         }
 
-        public static void Shutdown()
+        if (Environment.ProcessPath is null)
         {
-            _logger.Information("Shutdown");
-            Execute.OnUIThread(Application.Current.Shutdown);
+            return;
         }
 
-        private static bool _isWaitingToRestart;
+        ProcessStartInfo startInfo = new ProcessStartInfo { FileName = Environment.ProcessPath, };
 
-        public static async Task RestartAfterIdleAsync()
+        Process.Start(startInfo);
+    }
+
+    public static void Release()
+    {
+        ETagCache.Save();
+        Instances.SettingsViewModel.Sober();
+        Instances.MaaHotKeyManager.Release();
+
+        // 关闭程序时清理操作中心中的通知
+        ToastNotification.Cleanup();
+
+        ConfigurationHelper.Release();
+        ConfigFactory.Release();
+
+        // 释放互斥量
+        if (!_hasMutex)
         {
-            if (_isWaitingToRestart)
-            {
-                return;
-            }
-
-            _isWaitingToRestart = true;
-
-            await _runningState.UntilIdleAsync(60000);
-            ShutdownAndRestartWithoutArgs();
+            return;
         }
 
-        /// <inheritdoc/>
-        protected override void OnUnhandledException(DispatcherUnhandledExceptionEventArgs e)
-        {
-            if (_logger != Logger.None)
-            {
-                _logger.Fatal(e.Exception, "Unhandled exception");
-            }
+        _mutex?.ReleaseMutex();
+        _mutex?.Dispose();
+    }
 
-            var errorView = new ErrorView(e.Exception, true);
+    private static bool _isRestartingWithoutArgs;
+
+    /// <summary>
+    /// 重启，不带参数
+    /// </summary>
+    /// <param name="caller">Caller Member Name</param>
+    public static void ShutdownAndRestartWithoutArgs([CallerMemberName] string caller = "")
+    {
+        _isRestartingWithoutArgs = true;
+        _logger.Information("Shutdown and restart without Args, call by `{Caller}`", caller);
+        Execute.OnUIThread(Application.Current.Shutdown);
+    }
+
+    private static bool _isRestartingAfterUpdate;
+
+    public static void RestartAfterUpdate([CallerMemberName] string caller = "")
+    {
+        _isRestartingAfterUpdate = true;
+        ShutdownAndRestartWithoutArgs();
+    }
+
+    public static void Shutdown([CallerMemberName] string caller = "")
+    {
+        _logger.Information("Shutdown called by `{Caller}`", caller);
+        Execute.OnUIThread(Application.Current.Shutdown);
+    }
+
+    private static bool _isWaitingToRestart;
+
+    public static async Task RestartAfterIdleAsync()
+    {
+        if (_isWaitingToRestart)
+        {
+            return;
+        }
+
+        _isWaitingToRestart = true;
+
+        await RunningState.Instance.UntilIdleAsync(60000);
+        ShutdownAndRestartWithoutArgs();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnUnhandledException(DispatcherUnhandledExceptionEventArgs e)
+    {
+        LogUnhandledException(e.Exception);
+        ShowErrorDialog(e.Exception);
+        e.Handled = true;
+    }
+
+    private static void LogUnhandledException(Exception exception)
+    {
+        if (_logger != Logger.None)
+        {
+            _logger.Fatal(exception, "Unhandled exception occurred");
+        }
+    }
+
+    private static void ShowErrorDialog(Exception exception)
+    {
+        Application.Current.Dispatcher.Invoke(() => {
+            // DragDrop.DoDragSourceMove 会导致崩溃，但不需要退出程序
+            // 这是一坨屎，但是没办法，只能这样了
+            var isDragDropException = exception is COMException && exception.ToString()!.Contains("DragDrop.DoDragSourceMove");
+
+            var shouldExit = !isDragDropException;
+
+            var errorView = new ErrorView(exception, shouldExit);
             errorView.ShowDialog();
+        });
+    }
+
+    private static Dictionary<string, string> ParseArgs(string[] args, params string[] flags)
+    {
+        var result = new Dictionary<string, string>();
+        var flagSet = new HashSet<string>(flags);
+
+        for (int i = 0; i < args.Length; ++i)
+        {
+            if (flagSet.Contains(args[i]) && i + 1 < args.Length)
+            {
+                result[args[i]] = args[i + 1];
+                ++i;
+            }
         }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 检查配置并切换，如果成功切换则重启
+    /// </summary>
+    /// <param name="desiredConfig">配置名</param>
+    /// <returns>切换并重启</returns>
+    private static bool Config(string desiredConfig)
+    {
+        const string ConfigFile = @".\config\gui.json";
+        if (!File.Exists(ConfigFile) || string.IsNullOrEmpty(desiredConfig))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (UpdateConfiguration(desiredConfig))
+            {
+                ShutdownAndRestartWithoutArgs();
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error updating configuration: {DesiredConfig}, ex: {ExMessage}", desiredConfig, ex.Message);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 切换配置
+    /// </summary>
+    /// <param name="desiredConfig">配置名</param>
+    /// <returns>是否成功切换配置</returns>
+    private static bool UpdateConfiguration(string desiredConfig)
+    {
+        // 配置名可能就包在引号中，需要转义符，如 \"a\"
+        string currentConfig = ConfigurationHelper.GetCurrentConfiguration();
+        return currentConfig != desiredConfig && ConfigurationHelper.SwitchConfiguration(desiredConfig);
     }
 }

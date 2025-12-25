@@ -1,6 +1,6 @@
 // <copyright file="LogItemViewModel.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -11,89 +11,108 @@
 // but WITHOUT ANY WARRANTY
 // </copyright>
 
+#nullable enable
 using System;
+using System.Windows.Controls;
 using MaaWpfGui.Constants;
-using MaaWpfGui.Helper;
+using MaaWpfGui.Utilities;
+using MaaWpfGui.ViewModels.UI;
 using Stylet;
 
-namespace MaaWpfGui.ViewModels
+namespace MaaWpfGui.ViewModels;
+
+/// <summary>
+/// The view model of log item.
+/// </summary>
+public class LogItemViewModel : PropertyChangedBase
 {
     /// <summary>
-    /// The view model of log item.
+    /// Initializes a new instance of the <see cref="LogItemViewModel"/> class.
     /// </summary>
-    public class LogItemViewModel : PropertyChangedBase
+    /// <param name="content">The content.</param>
+    /// <param name="color">The font color.</param>
+    /// <param name="weight">The font weight.</param>
+    /// <param name="dateFormat">The Date format string</param>
+    /// <param name="showTime">The showtime bool.</param>
+    /// <param name="toolTip">The toolTip</param>
+    public LogItemViewModel(string content, string color = UiLogColor.Message, string weight = "Regular", string dateFormat = "", bool showTime = true, ToolTip? toolTip = null)
     {
-        /// <summary>
-        /// Initializes a new instance of the <see cref="LogItemViewModel"/> class.
-        /// </summary>
-        /// <param name="content">The content.</param>
-        /// <param name="color">The font color.</param>
-        /// <param name="weight">The font weight.</param>
-        /// <param name="dateFormat">The Date format string</param>
-        public LogItemViewModel(string content, string color = UiLogColor.Message, string weight = "Regular", string dateFormat = "MM'-'dd'  'HH':'mm':'ss", bool showTime = true)
+        if (string.IsNullOrEmpty(dateFormat))
         {
-            if (Instances.SettingsViewModel.UseLogItemDateFormat)
-            {
-                dateFormat = Instances.SettingsViewModel.LogItemDateFormatString;
-            }
-
-            Time = DateTime.Now.ToString(dateFormat);
-            Content = content;
-            Color = color;
-            Weight = weight;
-            ShowTime = showTime;
+            dateFormat = SettingsViewModel.GuiSettings.LogItemDateFormatString;
         }
 
-        private string _time;
+        _time = DateTime.Now.ToString(dateFormat);
+        _content = content;
+        _color = color;
+        _weight = weight;
+        _showTime = showTime;
+        _toolTip = toolTip;
+    }
 
-        /// <summary>
-        /// Gets or sets the time.
-        /// </summary>
-        public string Time
-        {
-            get => _time;
-            set => SetAndNotify(ref _time, value);
-        }
+    private string _time;
 
-        private bool _showTime = true;
+    /// <summary>
+    /// Gets or sets the time.
+    /// </summary>
+    public string Time
+    {
+        get => _time;
+        set => SetAndNotify(ref _time, value);
+    }
 
-        public bool ShowTime
-        {
-            get => _showTime;
-            set => SetAndNotify(ref _showTime, value);
-        }
+    private bool _showTime;
 
-        private string _content;
+    public bool ShowTime
+    {
+        get => _showTime;
+        set => SetAndNotify(ref _showTime, value);
+    }
 
-        /// <summary>
-        /// Gets or sets the content.
-        /// </summary>
-        public string Content
-        {
-            get => _content;
-            set => SetAndNotify(ref _content, value);
-        }
+    private string _content;
 
-        private string _color;
+    /// <summary>
+    /// Gets or sets the content.
+    /// </summary>
+    public string Content
+    {
+        get => _content;
+        set => SetAndNotify(ref _content, value);
+    }
 
-        /// <summary>
-        /// Gets or sets the font color.
-        /// </summary>
-        public string Color
-        {
-            get => _color;
-            set => SetAndNotify(ref _color, value);
-        }
+    private string _color;
 
-        private string _weight;
+    /// <summary>
+    /// Gets or sets the font color.
+    /// </summary>
+    public string Color
+    {
+        get => _color;
+        set => SetAndNotify(ref _color, value);
+    }
 
-        /// <summary>
-        /// Gets or sets the font weight.
-        /// </summary>
-        public string Weight
-        {
-            get => _weight;
-            set => SetAndNotify(ref _weight, value);
-        }
+    private string _weight;
+
+    /// <summary>
+    /// Gets or sets the font weight.
+    /// </summary>
+    public string Weight
+    {
+        get => _weight;
+        set => SetAndNotify(ref _weight, value);
+    }
+
+    [PropertyDependsOn(nameof(ToolTip))]
+    public bool ShowToolTip => _toolTip is { Content: not null };
+
+    private ToolTip? _toolTip;
+
+    /// <summary>
+    /// Gets or sets the toolTip.
+    /// </summary>
+    public ToolTip? ToolTip
+    {
+        get => _toolTip;
+        set => SetAndNotify(ref _toolTip, value);
     }
 }

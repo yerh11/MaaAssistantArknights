@@ -1,6 +1,6 @@
-﻿// <copyright file="DummyNotificationProvider.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// <copyright file="DummyNotificationProvider.cs" company="MaaAssistantArknights">
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -13,13 +13,12 @@
 
 using System.Threading.Tasks;
 
-namespace MaaWpfGui.Services.Notification
+namespace MaaWpfGui.Services.Notification;
+
+public class DummyNotificationProvider : IExternalNotificationProvider
 {
-    public class DummyNotificationProvider : IExternalNotificationProvider
+    public Task<bool> SendAsync(string title, string content)
     {
-        public Task<bool> SendAsync(string title, string content)
-        {
-            return Task.FromResult(true);
-        }
+        return Task.FromResult(true);
     }
 }

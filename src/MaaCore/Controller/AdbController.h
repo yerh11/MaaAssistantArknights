@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Common/AsstConf.h"
-
 #include "ControllerAPI.h"
 
 #include <deque>
@@ -12,13 +10,12 @@
 #include "Common/AsstMsg.h"
 #include "Config/GeneralConfig.h"
 #include "InstHelper.h"
+#include "LDExtras.h"
 #include "MumuExtras.h"
 
 namespace asst
 {
-class AdbController
-    : public ControllerAPI
-    , protected InstHelper
+class AdbController : public ControllerAPI, protected InstHelper
 {
 public:
     AdbController(const AsstCallback& callback, Assistant* inst, PlatformType type);
@@ -26,10 +23,7 @@ public:
     AdbController(AdbController&&) = delete;
     virtual ~AdbController();
 
-    virtual bool connect(
-        const std::string& adb_path,
-        const std::string& address,
-        const std::string& config) override;
+    virtual bool connect(const std::string& adb_path, const std::string& address, const std::string& config) override;
 
     virtual void set_kill_adb_on_exit(bool enable) noexcept override;
 
@@ -44,9 +38,11 @@ public:
     virtual bool screencap(cv::Mat& image_payload, bool allow_reconnect = false) override;
 
     virtual bool start_game(const std::string& client_type) override;
-    virtual bool stop_game() override;
+    virtual bool stop_game(const std::string& client_type) override;
 
     virtual bool click(const Point& p) override;
+
+    virtual bool input(const std::string& text) override;
 
     virtual bool swipe(
         const Point& p1,
@@ -57,17 +53,11 @@ public:
         double slope_out = 1,
         bool with_pause = false) override;
 
-    virtual bool inject_input_event([[maybe_unused]] const InputEvent& event) override
-    {
-        return false;
-    }
+    virtual bool inject_input_event([[maybe_unused]] const InputEvent& event) override { return false; }
 
     virtual bool press_esc() override;
 
-    virtual ControlFeat::Feat support_features() const noexcept override
-    {
-        return ControlFeat::NONE;
-    }
+    virtual ControlFeat::Feat support_features() const noexcept override { return ControlFeat::NONE; }
 
     virtual std::pair<int, int> get_screen_res() const noexcept override;
 
@@ -83,8 +73,7 @@ protected:
         bool allow_reconnect = true,
         bool recv_by_socket = false);
 
-    virtual std::optional<std::string>
-        reconnect(const std::string& cmd, int64_t timeout, bool recv_by_socket);
+    virtual std::optional<std::string> reconnect(const std::string& cmd, int64_t timeout, bool recv_by_socket);
 
     void release();
 
@@ -102,15 +91,17 @@ protected:
 
     virtual void clear_info() noexcept;
     void callback(AsstMsg msg, const json::value& details);
-    void init_mumu_extras(const AdbCfg& adb_cfg);
+    static int get_mumu_index(const std::string& address);
+    void init_mumu_extras(const AdbCfg& adb_cfg, const std::string& address);
+    void set_mumu_package(const std::string& client_type);
+    void init_ld_extras(const AdbCfg& adb_cfg, const std::string& address);
+    static int get_ld_index(const std::string& address);
 
     // 转换 data 中的 CRLF 为 LF：有些模拟器自带的 adb，exec-out 输出的 \n 会被替换成 \r\n，
     // 导致解码错误，所以这里转一下回来（点名批评 mumu 和雷电）
     static bool convert_lf(std::string& data);
 
     AsstCallback m_callback;
-
-    std::minstd_rand m_rand_engine;
 
     std::mutex m_callcmd_mutex;
 
@@ -119,10 +110,13 @@ protected:
     struct AdbProperty
     {
         /* command */
+        std::string devices;
+        std::string address_regex;
         std::string connect;
         std::string call_minitouch;
         std::string call_maatouch;
         std::string click;
+        std::string input;
         std::string swipe;
         std::string press_esc;
 
@@ -156,6 +150,7 @@ protected:
             Encode,
 #if ASST_WITH_EMULATOR_EXTRAS
             MumuExtras,
+            LDExtras,
 #endif
         } screencap_method = ScreencapMethod::UnknownYet;
     } m_adb;
@@ -176,6 +171,7 @@ protected:
 
 #if ASST_WITH_EMULATOR_EXTRAS
     MumuExtras m_mumu_extras;
+    LDExtras m_ld_extras;
 #endif
 };
 } // namespace asst

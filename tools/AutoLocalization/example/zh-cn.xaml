@@ -87,7 +87,7 @@
             <s:String x:Key="General">通用模式</s:String>
             <s:String x:Key="BlueStacks">蓝叠模拟器</s:String>
             <s:String x:Key="MuMuEmulator">MuMu 模拟器</s:String>
-            <s:String x:Key="MuMuEmulator12">MuMu 模拟器 12</s:String>
+            <s:String x:Key="MuMuEmulator12">MuMu 模拟器</s:String>
             <s:String x:Key="LDPlayer">雷电模拟器</s:String>
             <s:String x:Key="Nox">夜神模拟器</s:String>
             <s:String x:Key="XYAZ">逍遥模拟器</s:String>
@@ -159,9 +159,9 @@
             <s:String x:Key="NotSelected">不选择</s:String>
             <s:String x:Key="Official">官服</s:String>
             <s:String x:Key="Bilibili">Bilibili服</s:String>
-            <s:String x:Key="YoStarEN">国际服 (YoStarEN)</s:String>
-            <s:String x:Key="YoStarJP">日服 (YoStarJP)</s:String>
-            <s:String x:Key="YoStarKR">韩服 (YoStarKR)</s:String>
+            <s:String x:Key="YoStarEN">国际服 (YostarEN)</s:String>
+            <s:String x:Key="YoStarJP">日服 (YostarJP)</s:String>
+            <s:String x:Key="YoStarKR">韩服 (YostarKR)</s:String>
             <s:String x:Key="txwy">繁中服 (txwy)</s:String>
         </ResourceDictionary>
 

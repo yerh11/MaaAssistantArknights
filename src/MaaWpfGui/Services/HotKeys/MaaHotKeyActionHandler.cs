@@ -1,6 +1,6 @@
 // <copyright file="MaaHotKeyActionHandler.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -16,72 +16,69 @@ using System.Windows;
 using MaaWpfGui.Helper;
 using MaaWpfGui.States;
 
-namespace MaaWpfGui.Services.HotKeys
+namespace MaaWpfGui.Services.HotKeys;
+
+public class MaaHotKeyActionHandler : IMaaHotKeyActionHandler
 {
-    public class MaaHotKeyActionHandler : IMaaHotKeyActionHandler
+    private readonly RunningState _runningState;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MaaHotKeyActionHandler"/> class.
+    /// </summary>
+    public MaaHotKeyActionHandler()
     {
-        private readonly RunningState _runningState;
+        _runningState = RunningState.Instance;
+    }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="MaaHotKeyActionHandler"/> class.
-        /// </summary>
-        public MaaHotKeyActionHandler()
+    /// <inheritdoc/>
+    public void HandleKeyPressed(MaaHotKeyAction action)
+    {
+        switch (action)
         {
-            _runningState = RunningState.Instance;
+            case MaaHotKeyAction.ShowGui:
+                HandleShowGui();
+                break;
+
+            case MaaHotKeyAction.LinkStart:
+                HandleLinkStart();
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(action), action, null);
+        }
+    }
+
+    protected virtual void HandleShowGui() => Instances.MainWindowManager.SwitchWindowState();
+
+    protected virtual void HandleLinkStart()
+    {
+        if (_runningState.GetStopping())
+        {
+            return;
         }
 
-        /// <inheritdoc/>
-        public void HandleKeyPressed(MaaHotKeyAction action)
+        if (_runningState.GetIdle())
         {
-            switch (action)
-            {
-                case MaaHotKeyAction.ShowGui:
-                    HandleShowGui();
-                    break;
+            _ = Instances.TaskQueueViewModel.LinkStart();
 
-                case MaaHotKeyAction.LinkStart:
-                    HandleLinkStart();
-                    break;
-
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(action), action, null);
-            }
-        }
-
-        protected virtual void HandleShowGui() => Instances.MainWindowManager.SwitchWindowState();
-
-        protected virtual void HandleLinkStart()
-        {
-            if (Instances.TaskQueueViewModel.Stopping)
+            if (Instances.MainWindowManager.GetWindowState() != WindowState.Minimized)
             {
                 return;
             }
 
-            if (_runningState.GetIdle())
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("BackgroundLinkStarted"));
+        }
+        else
+        {
+            _ = Instances.TaskQueueViewModel.Stop();
+
+            if (Application.Current.MainWindow == null ||
+                Application.Current.MainWindow.WindowState != WindowState.Minimized)
             {
-                Instances.TaskQueueViewModel.LinkStart();
-
-                if (Instances.MainWindowManager.GetWindowState() != WindowState.Minimized)
-                {
-                    return;
-                }
-
-                using var toast = new ToastNotification(LocalizationHelper.GetString("BackgroundLinkStarted"));
-                toast.Show();
+                return;
             }
-            else
-            {
-                _ = Instances.TaskQueueViewModel.Stop();
 
-                if (Application.Current.MainWindow == null ||
-                    Application.Current.MainWindow.WindowState != WindowState.Minimized)
-                {
-                    return;
-                }
-
-                using var toast = new ToastNotification(LocalizationHelper.GetString("BackgroundLinkStopped"));
-                toast.Show();
-            }
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("BackgroundLinkStopped"));
         }
     }
 }

@@ -1,6 +1,6 @@
 // <copyright file="AnnouncementViewModel.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -11,75 +11,266 @@
 // but WITHOUT ANY WARRANTY
 // </copyright>
 
+using System;
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
+using System.Windows.Input;
+using HandyControl.Controls;
+using HandyControl.Tools.Command;
+using MaaWpfGui.Configuration.Factory;
 using MaaWpfGui.Constants;
 using MaaWpfGui.Helper;
+using Serilog;
 using Stylet;
 
-namespace MaaWpfGui.ViewModels.UI
+namespace MaaWpfGui.ViewModels.UI;
+
+/// <summary>
+/// The view model of version update.
+/// </summary>
+// 通过 container.Get<AnnouncementViewModel>(); 实例化或获取实例
+// ReSharper disable once ClassNeverInstantiated.Global
+public class AnnouncementViewModel : Screen
 {
-    /// <summary>
-    /// The view model of version update.
-    /// </summary>
-    // 通过 container.Get<AnnouncementViewModel>(); 实例化或获取实例
-    // ReSharper disable once ClassNeverInstantiated.Global
-    public class AnnouncementViewModel : Screen
+    private static readonly ILogger _logger = Log.ForContext<AnnouncementViewModel>();
+
+    private static readonly object _lock = new();
+
+    public string ImageSource { get; set; }
+
+    public class AnnouncementSection
     {
-        private string _announcementInfo = ConfigurationHelper.GetValue(ConfigurationKeys.AnnouncementInfo, string.Empty);
+        public string Title { get; set; }
 
-        /// <summary>
-        /// Gets the announcement info.
-        /// </summary>
-        // ReSharper disable once MemberCanBePrivate.Global
-        public string AnnouncementInfo
-        {
-            get => _announcementInfo;
-            private set
-            {
-                SetAndNotify(ref _announcementInfo, value);
-                ConfigurationHelper.SetValue(ConfigurationKeys.AnnouncementInfo, value);
-            }
-        }
+        public bool IsNew { get; set; }
 
-        private bool _doNotRemindThisAnnouncementAgain = bool.Parse(ConfigurationHelper.GetValue(ConfigurationKeys.DoNotRemindThisAnnouncementAgain, false.ToString()));
+        public string Content { get; set; }
+    }
 
-        public bool DoNotRemindThisAnnouncementAgain
-        {
-            get => _doNotRemindThisAnnouncementAgain;
-            set
-            {
-                SetAndNotify(ref _doNotRemindThisAnnouncementAgain, value);
-                ConfigurationHelper.SetValue(ConfigurationKeys.DoNotRemindThisAnnouncementAgain, value.ToString());
-            }
-        }
+    public AnnouncementViewModel()
+    {
+        UpdateImageSource();
 
-        /// <summary>
-        /// 检查更新
-        /// </summary>
-        /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-        public async Task CheckAndDownloadAnnouncement()
-        {
-            const string Path = "announcements/wpf.md";
-            const string Url = MaaUrls.MaaApi + Path;
-
-            using var response = await ETagCache.FetchResponseWithEtag(Url, string.IsNullOrEmpty(AnnouncementInfo));
-
-            if (response == null ||
-                response.StatusCode == System.Net.HttpStatusCode.NotModified ||
-                response.StatusCode != System.Net.HttpStatusCode.OK)
+        UpdateScrollStateCommand = new RelayCommand<ScrollViewer>(scrollViewer => {
+            if (scrollViewer == null)
             {
                 return;
             }
 
-            var body = await HttpResponseHelper.GetStringAsync(response);
-            if (!string.IsNullOrEmpty(body))
+            // 计算是否滚动到底部
+            IsScrolledToBottom |= scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - 10;
+        });
+
+        ScrollToTopCommand = new RelayCommand<ScrollViewer>(scrollViewer => {
+            if (scrollViewer == null)
             {
-                AnnouncementInfo = body;
-                DoNotRemindThisAnnouncementAgain = false;
+                return;
             }
 
-            ETagCache.Set(response);
-            ETagCache.Save();
+            scrollViewer.ScrollToTop();
+        });
+        AnnouncementSections = [.. ParseAnnouncementInfo(AnnouncementInfo)];
+    }
+
+    private void UpdateImageSource()
+    {
+        ImageSource = SettingsViewModel.GuiSettings.Language switch {
+            "zh-cn" or "zh-tw" => "/Res/Img/NoSkland.jpg",
+            _ => "/Res/Img/NoSkLandEn.jpg",
+        };
+    }
+
+    private static ObservableCollection<AnnouncementSection> ParseAnnouncementInfo(string markdown)
+    {
+        const string NewString = "(NEW!!!)";
+        var sections = markdown.Split(["### "], StringSplitOptions.RemoveEmptyEntries)
+            .Select(section => {
+                var lines = section.Split('\n');
+                bool isNew = false;
+                if (lines.Length > 0 && lines[0].Contains(NewString, StringComparison.OrdinalIgnoreCase))
+                {
+                    isNew = true;
+                    lines[0] = lines[0].Replace(NewString, string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+                }
+
+                return new AnnouncementSection {
+                    Title = lines.FirstOrDefault(),
+                    IsNew = isNew,
+                    Content = "### " + string.Join("\n", lines).Trim([' ', '\n', '-']),
+                };
+            }).ToList();
+
+        sections.Insert(0, new() {
+            Title = "ALL~ the Announcements",
+            Content = markdown.Replace(NewString, "*", StringComparison.OrdinalIgnoreCase).Trim(),
+        });
+
+        return [.. sections];
+    }
+
+    public ICommand UpdateScrollStateCommand { get; }
+
+    public ICommand ScrollToTopCommand { get; }
+
+    private bool _isScrolledToBottom;
+
+    public bool IsScrolledToBottom
+    {
+        get => _isScrolledToBottom;
+        set => SetAndNotify(ref _isScrolledToBottom, value);
+    }
+
+    private ObservableCollection<AnnouncementSection> _announcementSections;
+
+    public ObservableCollection<AnnouncementSection> AnnouncementSections
+    {
+        get => _announcementSections;
+        set {
+            SetAndNotify(ref _announcementSections, value);
+            SelectedAnnouncementSection = AnnouncementSections.FirstOrDefault();
         }
+    }
+
+    private AnnouncementSection _selectedAnnouncementSection;
+
+    public AnnouncementSection SelectedAnnouncementSection
+    {
+        get => _selectedAnnouncementSection;
+        set => SetAndNotify(ref _selectedAnnouncementSection, value);
+    }
+
+    private static readonly string _announcementInFile = SettingsViewModel.GuiSettings.Language switch {
+        "zh-cn" or "zh-tw" => Path.Combine(PathsHelper.CacheDir, "announcement.md"),
+        _ => Path.Combine(PathsHelper.CacheDir, "announcement_en.md"),
+    };
+
+    private static string AnnouncementInFile
+    {
+        get {
+            if (!File.Exists(_announcementInFile))
+            {
+                return null;
+            }
+
+            try
+            {
+                lock (_lock)
+                {
+                    return File.ReadAllText(_announcementInFile);
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.Error(e, "Failed to read announcement from file");
+            }
+
+            return null;
+        }
+
+        set {
+            try
+            {
+                lock (_lock)
+                {
+                    File.WriteAllText(_announcementInFile, value);
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.Error(e, "Failed to write announcement to file");
+            }
+        }
+    }
+
+    private string _announcementInfo = AnnouncementInFile ?? string.Empty;
+
+    /// <summary>
+    /// Gets the announcement info.
+    /// </summary>
+    // ReSharper disable once MemberCanBePrivate.Global
+    public string AnnouncementInfo
+    {
+        get => _announcementInfo;
+        private set {
+            SetAndNotify(ref _announcementInfo, value);
+            AnnouncementInFile = value;
+            AnnouncementSections = [.. ParseAnnouncementInfo(AnnouncementInfo)];
+        }
+    }
+
+    private bool _doNotRemindThisAnnouncementAgain = ConfigFactory.Root.AnnouncementInfo.DoNotShowAgain;
+
+    public bool DoNotRemindThisAnnouncementAgain
+    {
+        get => _doNotRemindThisAnnouncementAgain;
+        set {
+            SetAndNotify(ref _doNotRemindThisAnnouncementAgain, value);
+            ConfigFactory.Root.AnnouncementInfo.DoNotShowAgain = value;
+        }
+    }
+
+    private bool _doNotShowAnnouncement = ConfigFactory.Root.AnnouncementInfo.DoNotShow;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to show the update.
+    /// </summary>
+    public bool DoNotShowAnnouncement
+    {
+        get => _doNotShowAnnouncement;
+        set {
+            SetAndNotify(ref _doNotShowAnnouncement, value);
+            ConfigFactory.Root.AnnouncementInfo.DoNotShow = value;
+        }
+    }
+
+    /// <summary>
+    /// 检查更新
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    public async Task CheckAndDownloadAnnouncement()
+    {
+        string path = "announcements/wpf";
+        if (SettingsViewModel.GuiSettings.Language is not ("zh-cn" or "zh-tw"))
+        {
+            path += "_en";
+        }
+
+        string url = MaaUrls.MaaApi + path + ".md";
+
+        using var response = await ETagCache.FetchResponseWithEtag(url, string.IsNullOrEmpty(AnnouncementInfo));
+
+        if (response == null ||
+            response.StatusCode == System.Net.HttpStatusCode.NotModified ||
+            response.StatusCode != System.Net.HttpStatusCode.OK)
+        {
+            return;
+        }
+
+        var body = await HttpResponseHelper.GetStringAsync(response);
+        if (!string.IsNullOrEmpty(body) && AnnouncementInfo != body)
+        {
+            const string Template =
+                "----------- OLD -----------\n" +
+                "{AnnouncementInfo}\n" +
+                "---------------------------\n\n" +
+                "=========== NEW ===========\n" +
+                "{Body}\n" +
+                "===========================";
+            _logger.Information(Template,
+                AnnouncementInfo,
+                body);
+            AnnouncementInfo = body;
+            DoNotRemindThisAnnouncementAgain = false;
+        }
+
+        ETagCache.Set(response, url);
+        ETagCache.Save();
+    }
+
+    public void Close()
+    {
+        RequestClose();
     }
 }

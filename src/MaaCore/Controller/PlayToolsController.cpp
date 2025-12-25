@@ -1,20 +1,20 @@
 #include "PlayToolsController.h"
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 #include "Config/GeneralConfig.h"
-#include "Utils/NoWarningCV.h"
+#include "MaaUtils/NoWarningCV.hpp"
 
-using asio::ip::tcp;
-namespace socket_ops = asio::detail::socket_ops;
+using boost::asio::ip::tcp;
+namespace socket_ops = boost::asio::detail::socket_ops;
 
 asst::PlayToolsController::PlayToolsController(
     const AsstCallback& callback,
     Assistant* inst,
-    PlatformType type [[maybe_unused]])
-    : InstHelper(inst)
-    , m_callback(callback)
-    , m_socket(m_context)
+    PlatformType type [[maybe_unused]]) :
+    InstHelper(inst),
+    m_callback(callback),
+    m_socket(m_context)
 {
     LogTraceFunction;
 }
@@ -58,9 +58,7 @@ size_t asst::PlayToolsController::get_version() const noexcept
     return size_t();
 }
 
-bool asst::PlayToolsController::screencap(
-    cv::Mat& image_payload,
-    bool allow_reconnect [[maybe_unused]])
+bool asst::PlayToolsController::screencap(cv::Mat& image_payload, bool allow_reconnect [[maybe_unused]])
 {
     LogTraceFunction;
 
@@ -69,8 +67,8 @@ bool asst::PlayToolsController::screencap(
 
     try {
         constexpr char request[6] = { 0, 4, 'S', 'C', 'R', 'N' };
-        asio::write(m_socket, asio::buffer(request));
-        asio::read(m_socket, asio::buffer(&image_size, sizeof(image_size)));
+        boost::asio::write(m_socket, boost::asio::buffer(request));
+        boost::asio::read(m_socket, boost::asio::buffer(&image_size, sizeof(image_size)));
         image_size = socket_ops::network_to_host_long(image_size);
     }
     catch (const std::exception& e) {
@@ -85,7 +83,7 @@ bool asst::PlayToolsController::screencap(
 
     try {
         std::vector<uint8_t> buffer(image_size);
-        asio::read(m_socket, asio::buffer(buffer, image_size));
+        boost::asio::read(m_socket, boost::asio::buffer(buffer, image_size));
         image_payload = cv::Mat(m_screen_size.second, m_screen_size.first, CV_8UC4, buffer.data());
         cv::cvtColor(image_payload, image_payload, cv::COLOR_RGBA2BGR);
     }
@@ -99,14 +97,15 @@ bool asst::PlayToolsController::screencap(
 
 bool asst::PlayToolsController::start_game(const std::string& client_type [[maybe_unused]])
 {
+    Log.info("InputText is not supported on iOS");
     return true;
 }
 
-bool asst::PlayToolsController::stop_game()
+bool asst::PlayToolsController::stop_game(const std::string& client_type [[maybe_unused]])
 {
     try {
         constexpr char request[6] = { 0, 4, 'T', 'E', 'R', 'M' };
-        asio::write(m_socket, asio::buffer(request));
+        boost::asio::write(m_socket, boost::asio::buffer(request));
     }
     catch (const std::exception& e) {
         Log.error("Cannot terminate game:", e.what());
@@ -120,6 +119,12 @@ bool asst::PlayToolsController::click(const Point& p)
 {
     Log.trace("PlayTools click:", p);
     return toucher_down(p) && toucher_up(p);
+}
+
+bool asst::PlayToolsController::input([[maybe_unused]] const std::string& text)
+{
+    Log.info("InputText is not supported on iOS");
+    return true;
 }
 
 bool asst::PlayToolsController::swipe(
@@ -145,7 +150,7 @@ bool asst::PlayToolsController::swipe(
     }
 
     Log.trace("PlayTools swipe", p1, p2, duration, extra_swipe, slope_in, slope_out);
-    
+
     toucher_down(p1);
 
     auto cubic_spline = [](double slope_0, double slope_1, double t) {
@@ -156,10 +161,8 @@ bool asst::PlayToolsController::swipe(
     }; // TODO: move this to math.hpp
 
     const auto progressive_move = [&](int _x1, int _y1, int _x2, int _y2, int _duration) {
-        for (int cur_time = DefaultSwipeDelay; cur_time < _duration;
-             cur_time += DefaultSwipeDelay) {
-            double progress =
-                cubic_spline(slope_in, slope_out, static_cast<double>(cur_time) / duration);
+        for (int cur_time = DefaultSwipeDelay; cur_time < _duration; cur_time += DefaultSwipeDelay) {
+            double progress = cubic_spline(slope_in, slope_out, static_cast<double>(cur_time) / duration);
             int cur_x = static_cast<int>(std::lerp(_x1, _x2, progress));
             int cur_y = static_cast<int>(std::lerp(_y1, _y2, progress));
             if (cur_x < 0 || cur_x > width || cur_y < 0 || cur_y > height) {
@@ -178,12 +181,7 @@ bool asst::PlayToolsController::swipe(
 
     if (extra_swipe && opt.minitouch_extra_swipe_duration > 0) {
         toucher_wait(opt.minitouch_swipe_extra_end_delay); // 停留终点
-        progressive_move(
-            x2,
-            y2,
-            x2,
-            y2 - opt.minitouch_extra_swipe_dist,
-            opt.minitouch_extra_swipe_duration);
+        progressive_move(x2, y2, x2, y2 - opt.minitouch_extra_swipe_dist, opt.minitouch_extra_swipe_duration);
     }
 
     return toucher_up(p2);
@@ -228,12 +226,22 @@ void asst::PlayToolsController::toucher_wait(const int delay)
 
 void asst::PlayToolsController::close()
 {
-    std::error_code ec;
     m_screen_size = { 0, 0 };
 
     if (m_socket.is_open()) {
-        m_socket.shutdown(tcp::socket::shutdown_both, ec);
-        m_socket.close(ec);
+        try {
+            m_socket.shutdown(tcp::socket::shutdown_both);
+        }
+        catch (const std::exception& e) {
+            Log.warn("Error during socket shutdown in close():", e.what());
+        }
+
+        try {
+            m_socket.close();
+        }
+        catch (const std::exception& e) {
+            Log.warn("Error during socket close() cleanup:", e.what());
+        }
     }
 }
 
@@ -255,9 +263,9 @@ bool asst::PlayToolsController::open()
     constexpr char signature[4] = { 'O', 'K', 'A', 'Y' };
 
     try {
-        asio::connect(m_socket, resolver.resolve(host, port));
-        asio::write(m_socket, asio::buffer(handshake));
-        asio::read(m_socket, asio::buffer(buffer, 4));
+        boost::asio::connect(m_socket, resolver.resolve(host, port));
+        boost::asio::write(m_socket, boost::asio::buffer(handshake));
+        boost::asio::read(m_socket, boost::asio::buffer(buffer, 4));
     }
     catch (const std::exception& e) {
         Log.error("Cannot connect to", m_address, e.what());
@@ -278,8 +286,8 @@ bool asst::PlayToolsController::check_version()
     constexpr char request[6] = { 0, 4, 'V', 'E', 'R', 'N' };
 
     try {
-        asio::write(m_socket, asio::buffer(request));
-        asio::read(m_socket, asio::buffer(&version, sizeof(version)));
+        boost::asio::write(m_socket, boost::asio::buffer(request));
+        boost::asio::read(m_socket, boost::asio::buffer(&version, sizeof(version)));
     }
     catch (const std::exception& e) {
         Log.error("Cannot get MaaTools version:", e.what());
@@ -308,9 +316,9 @@ bool asst::PlayToolsController::fetch_screen_res()
     constexpr char request[6] = { 0, 4, 'S', 'I', 'Z', 'E' };
 
     try {
-        asio::write(m_socket, asio::buffer(request));
-        asio::read(m_socket, asio::buffer(&width, sizeof(width)));
-        asio::read(m_socket, asio::buffer(&height, sizeof(height)));
+        boost::asio::write(m_socket, boost::asio::buffer(request));
+        boost::asio::read(m_socket, boost::asio::buffer(&width, sizeof(width)));
+        boost::asio::read(m_socket, boost::asio::buffer(&height, sizeof(height)));
     }
     catch (const std::exception& e) {
         Log.error("Cannot get screen resolution:", e.what());
@@ -324,10 +332,7 @@ bool asst::PlayToolsController::fetch_screen_res()
     return true;
 }
 
-bool asst::PlayToolsController::toucher_commit(
-    const TouchPhase phase,
-    const Point& p,
-    const int delay)
+bool asst::PlayToolsController::toucher_commit(const TouchPhase phase, const Point& p, const int delay)
 {
     open();
     uint16_t x = socket_ops::host_to_network_short(static_cast<uint16_t>(p.x));
@@ -338,8 +343,8 @@ bool asst::PlayToolsController::toucher_commit(
 
     try {
         constexpr char request[6] = { 0, 9, 'T', 'U', 'C', 'H' };
-        asio::write(m_socket, asio::buffer(request));
-        asio::write(m_socket, asio::buffer(payload, 5));
+        boost::asio::write(m_socket, boost::asio::buffer(request));
+        boost::asio::write(m_socket, boost::asio::buffer(payload, 5));
     }
     catch (const std::exception& e) {
         Log.error("Cannot touch screen:", e.what());

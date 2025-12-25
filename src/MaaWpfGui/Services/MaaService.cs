@@ -1,6 +1,6 @@
 // <copyright file="MaaService.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -19,60 +19,163 @@ using AsstHandle = System.IntPtr;
 using AsstInstanceOptionKey = System.Int32;
 using AsstTaskId = System.Int32;
 
-namespace MaaWpfGui.Services
+namespace MaaWpfGui.Services;
+
+#pragma warning disable SA1601 // Partial elements should be documented
+internal static partial class MaaService
 {
-    public static class MaaService
-    {
-        public delegate void CallbackDelegate(int msg, IntPtr jsonBuffer, IntPtr customArg);
+    internal delegate void CallbackDelegate(int msg, IntPtr jsonBuffer, IntPtr customArg);
 
-        public delegate void ProcCallbackMsg(AsstMsg msg, JObject details);
+    internal delegate void ProcCallbackMsg(AsstMsg msg, JObject details);
 
-        [DllImport("MaaCore.dll")]
-        public static extern AsstHandle AsstCreateEx(CallbackDelegate callback, IntPtr customArg);
+    [LibraryImport("MaaCore.dll")]
+    internal static partial AsstHandle AsstCreateEx(CallbackDelegate callback, IntPtr customArg);
 
-        [DllImport("MaaCore.dll")]
-        public static extern void AsstDestroy(AsstHandle handle);
+    [LibraryImport("MaaCore.dll")]
+    internal static partial void AsstDestroy(AsstHandle handle);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe bool AsstSetInstanceOption(AsstHandle handle, AsstInstanceOptionKey key, byte* value);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool AsstSetInstanceOption(AsstHandle handle, AsstInstanceOptionKey key, byte* value);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe bool AsstSetStaticOption(AsstStaticOptionKey key, [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
+    [LibraryImport("MaaCore.dll", StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AsstSetStaticOption(AsstStaticOptionKey key, string value);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe bool AsstLoadResource(byte* dirname);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool AsstSetUserDir(byte* dirname);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe bool AsstConnect(AsstHandle handle, byte* adbPath, byte* address, byte* config);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool AsstLoadResource(byte* dirname);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe AsstTaskId AsstAppendTask(AsstHandle handle, byte* type, byte* taskParams);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool AsstConnect(AsstHandle handle, byte* adbPath, byte* address, byte* config);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe bool AsstSetTaskParams(AsstHandle handle, AsstTaskId id, byte* taskParams);
+    [LibraryImport("MaaCore.dll")]
+    internal static unsafe partial AsstTaskId AsstAppendTask(AsstHandle handle, byte* type, byte* taskParams);
 
-        [DllImport("MaaCore.dll")]
-        public static extern bool AsstStart(AsstHandle handle);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool AsstSetTaskParams(AsstHandle handle, AsstTaskId id, byte* taskParams);
 
-        [DllImport("MaaCore.dll")]
-        public static extern bool AsstRunning(AsstHandle handle);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AsstStart(AsstHandle handle);
 
-        [DllImport("MaaCore.dll")]
-        public static extern bool AsstStop(AsstHandle handle);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AsstRunning(AsstHandle handle);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe ulong AsstGetImage(AsstHandle handle, byte* buff, ulong buffSize);
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AsstStop(AsstHandle handle);
 
-        [DllImport("MaaCore.dll")]
-        public static extern ulong AsstGetNullSize();
+    [LibraryImport("MaaCore.dll")]
+    internal static unsafe partial Int32 AsstAsyncScreencap(AsstHandle handle, [MarshalAs(UnmanagedType.Bool)] bool block);
 
-        [DllImport("MaaCore.dll")]
-        public static extern IntPtr AsstGetVersion();
+    [LibraryImport("MaaCore.dll")]
+    internal static unsafe partial ulong AsstGetImage(AsstHandle handle, byte* buff, ulong buffSize);
 
-        [DllImport("MaaCore.dll")]
-        public static extern bool AsstBackToHome(AsstHandle handle);
+    [LibraryImport("MaaCore.dll")]
+    internal static unsafe partial ulong AsstGetImageBgr(AsstHandle handle, byte* buff, ulong buffSize);
 
-        [DllImport("MaaCore.dll")]
-        public static extern unsafe void AsstSetConnectionExtras(byte* name, byte* extras);
-    }
+    [LibraryImport("MaaCore.dll")]
+    internal static partial ulong AsstGetNullSize();
+
+    [LibraryImport("MaaCore.dll")]
+    internal static partial IntPtr AsstGetVersion();
+
+    [LibraryImport("MaaCore.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AsstBackToHome(AsstHandle handle);
+
+    [LibraryImport("MaaCore.dll")]
+    internal static unsafe partial void AsstSetConnectionExtras(byte* name, byte* extras);
+}
+#pragma warning restore SA1601 // Partial elements should be documented
+
+public enum AsstTaskType : byte
+{
+    /// <summary>
+    /// 开始唤醒。
+    /// </summary>
+    StartUp = 0,
+
+    /// <summary>
+    /// 关闭明日方舟
+    /// </summary>
+    CloseDown,
+
+    /// <summary>
+    /// 刷理智
+    /// </summary>
+    Fight,
+
+    /// <summary>
+    /// 领取奖励
+    /// </summary>
+    Award,
+
+    /// <summary>
+    /// 信用商店
+    /// </summary>
+    Mall,
+
+    /// <summary>
+    /// 基建
+    /// </summary>
+    Infrast,
+
+    /// <summary>
+    /// 招募
+    /// </summary>
+    Recruit,
+
+    /// <summary>
+    /// 肉鸽
+    /// </summary>
+    Roguelike,
+
+    /// <summary>
+    /// 自动战斗
+    /// </summary>
+    Copilot,
+
+    /// <summary>
+    /// 自动战斗-保全ver
+    /// </summary>
+    SSSCopilot,
+
+    /// <summary>
+    /// 单步任务（目前仅支持战斗）
+    /// </summary>
+    SingleStep,
+
+    /// <summary>
+    /// 视频识别
+    /// </summary>
+    VideoRecognition,
+
+    /// <summary>
+    /// 仓库识别
+    /// </summary>
+    Depot,
+
+    /// <summary>
+    /// 干员识别
+    /// </summary>
+    OperBox,
+
+    /// <summary>
+    /// 生息演算
+    /// </summary>
+    Reclamation,
+
+    /// <summary>
+    /// 自定义任务
+    /// </summary>
+    Custom,
 }

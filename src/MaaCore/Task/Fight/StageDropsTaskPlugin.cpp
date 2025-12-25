@@ -1,7 +1,7 @@
 #include "StageDropsTaskPlugin.h"
 
+#include <boost/regex.hpp>
 #include <chrono>
-#include <regex>
 #include <thread>
 
 #include "Common/AsstTypes.h"
@@ -83,7 +83,7 @@ bool asst::StageDropsTaskPlugin::_run()
 {
     LogTraceFunction;
 
-    set_start_button_delay();
+    // set_start_button_delay();
 
     if (!recognize_drops()) {
         if (!check_stage_valid()) {
@@ -183,8 +183,9 @@ bool asst::StageDropsTaskPlugin::recognize_drops()
 
     auto&& [code, difficulty] = analyzer.get_stage_key();
     m_stage_code = std::move(code);
-    ranges::transform(m_stage_code, m_stage_code.begin(),
-                      [](char ch) -> char { return static_cast<char>(::toupper(ch)); });
+    std::ranges::transform(m_stage_code, m_stage_code.begin(), [](char ch) -> char {
+        return static_cast<char>(::toupper(ch));
+    });
     m_stage_difficulty = difficulty;
     m_stars = analyzer.get_stars();
     m_cur_drops = analyzer.get_drops();
@@ -241,11 +242,6 @@ void asst::StageDropsTaskPlugin::drop_info_callback()
         }
         stats_vec.emplace_back(std::move(info));
     }
-    //// 排个序，数量多的放前面
-    // std::sort(stats_vec.begin(), stats_vec.end(),
-    //     [](const json::value& lhs, const json::value& rhs) -> bool {
-    //         return lhs.at("count").as_integer() > rhs.at("count").as_integer();
-    //     });
 
     json::value info = basic_info_with_what("StageDrops");
     json::value& details = info["details"];
@@ -267,6 +263,8 @@ void asst::StageDropsTaskPlugin::drop_info_callback()
 
 void asst::StageDropsTaskPlugin::set_start_button_delay()
 {
+    // 影响多实例 + 占用也不高
+    // 因AUTO模式连战 ban了
     if (m_is_annihilation) {
         return;
     }
@@ -349,7 +347,7 @@ bool asst::StageDropsTaskPlugin::upload_to_server(const std::string& subtask, Re
             callback(AsstMsg::SubTaskError, cb_info);
             return false;
         }
-        if (ranges::find(filter, drop_type) == filter.cend()) {
+        if (std::ranges::find(filter, drop_type) == filter.cend()) {
             continue;
         }
         if (drop.at("itemId").as_string().empty()) {
@@ -368,6 +366,18 @@ bool asst::StageDropsTaskPlugin::upload_to_server(const std::string& subtask, Re
     if (!m_penguin_id.empty()) {
         extra_headers.insert({ "authorization", "PenguinID " + m_penguin_id });
     }
+
+    std::string version = Version;
+    if (version.find("DEBUG VERSION") != std::string::npos) {
+        version = "dev";
+    }
+    else if (!version.empty() && version[0] == 'v') {
+        version.erase(0, 1);
+    }
+
+    version.erase(std::ranges::remove(version, ' ').begin(), version.end());
+
+    extra_headers.insert({ "User-Agent", std::string("MaaAssistantArknights/") + version });
 
     std::shared_ptr<ReportDataTask> report_task_ptr;
     if (report_type == ReportType::PenguinStats) {
@@ -407,11 +417,6 @@ void asst::StageDropsTaskPlugin::report_penguin_callback(AsstMsg msg, const json
     auto p_this = dynamic_cast<StageDropsTaskPlugin*>(task_ptr);
     if (!p_this) {
         return;
-    }
-
-    if (msg == AsstMsg::SubTaskExtraInfo && detail.get("what", std::string()) == "PenguinId") {
-        std::string id = detail.get("details", "id", std::string());
-        p_this->m_penguin_id = id;
     }
 
     p_this->callback(msg, detail);

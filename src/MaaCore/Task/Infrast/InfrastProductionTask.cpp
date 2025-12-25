@@ -1,7 +1,7 @@
 #include "InfrastProductionTask.h"
 
-#include "Utils/Ranges.hpp"
 #include <algorithm>
+#include <ranges>
 
 #include <calculator/calculator.hpp>
 
@@ -210,50 +210,59 @@ bool asst::InfrastProductionTask::shift_facility_list()
         }
 
         /* 进入干员选择页面 */
-        ctrler()->click(add_button);
-        sleep(add_task_ptr->post_delay);
+        if (!m_skip_shift) {
+            ctrler()->click(add_button);
+            sleep(add_task_ptr->post_delay);
 
-        // 如果是使用了编队组来排班
-        if (current_room_config().use_operator_groups) {
-            match_operator_groups();
-        }
+            close_quick_formation_expand_role();
 
-        for (int i = 0; i <= OperSelectRetryTimes; ++i) {
-            if (need_exit()) {
-                return false;
+            // 如果是使用了编队组来排班
+            if (current_room_config().use_operator_groups) {
+                match_operator_groups();
             }
 
-            if (is_use_custom_opers()) {
-                bool name_select_ret = swipe_and_select_custom_opers();
-                if (name_select_ret) {
-                    break;
+            for (int i = 0; i <= OperSelectRetryTimes; ++i) {
+                if (need_exit()) {
+                    return false;
+                }
+
+                if (is_use_custom_opers()) {
+                    bool name_select_ret = swipe_and_select_custom_opers();
+                    if (name_select_ret) {
+                        break;
+                    }
+                    else {
+                        swipe_to_the_left_of_operlist();
+                        continue;
+                    }
+                }
+
+                if (m_all_available_opers.empty()) {
+                    if (!opers_detect_with_swipe()) {
+                        return false;
+                    }
+                    swipe_to_the_left_of_operlist();
                 }
                 else {
+                    opers_detect();
+                }
+
+                optimal_calc();
+
+                // 清空按钮放到识别完之后，现在通过切换职业栏来回到界面最左侧，先清空会导致当前设施里的人排到最后面
+                click_clear_button();
+                if (!opers_choose()) {
+                    m_all_available_opers.clear();
                     swipe_to_the_left_of_operlist();
                     continue;
                 }
+                break;
             }
-
-            click_clear_button();
-
-            if (m_all_available_opers.empty()) {
-                if (!opers_detect_with_swipe()) {
-                    return false;
-                }
-                swipe_to_the_left_of_operlist();
-            }
-            else {
-                opers_detect();
-            }
-            optimal_calc();
-            if (!opers_choose()) {
-                m_all_available_opers.clear();
-                swipe_to_the_left_of_operlist();
-                continue;
-            }
-            break;
+            click_confirm_button();
         }
-        click_confirm_button();
+        else {
+            Log.info("skip shift in rotation mode");
+        }
 
         /*启用自定义基建时，如果产物不一致则直接更换产物*/
         if (m_is_custom && m_is_product_incorrect) {
@@ -316,8 +325,7 @@ size_t asst::InfrastProductionTask::opers_detect()
     const auto& cur_all_opers = oper_analyzer.get_result();
     max_num_of_opers_per_page = (std::max)(max_num_of_opers_per_page, cur_all_opers.size());
 
-    const int face_hash_thres =
-        std::dynamic_pointer_cast<HashTaskInfo>(Task.get("InfrastOperFaceHash"))->dist_threshold;
+    const int face_hash_thres = Task.get("InfrastOperFace")->special_params[0];
     const size_t pre_size = m_all_available_opers.size();
     for (const auto& cur_oper : cur_all_opers) {
         if (cur_oper.skills.empty()) {
@@ -336,7 +344,7 @@ size_t asst::InfrastProductionTask::opers_detect()
             //--cur_available_num;
             continue;
         }
-        auto find_iter = ranges::find_if(m_all_available_opers, [&](const infrast::Oper& oper) -> bool {
+        auto find_iter = std::ranges::find_if(m_all_available_opers, [&](const infrast::Oper& oper) -> bool {
             if (oper.skills != cur_oper.skills) {
                 return false;
             }
@@ -380,7 +388,7 @@ bool asst::InfrastProductionTask::optimal_calc()
     std::vector<infrast::SkillsComb> optimal_combs;
     optimal_combs.reserve(cur_max_num_of_opers);
     double max_efficient = 0;
-    ranges::sort(all_available_combs, [&](const infrast::SkillsComb& lhs, const infrast::SkillsComb& rhs) -> bool {
+    std::ranges::sort(all_available_combs, [&](const infrast::SkillsComb& lhs, const infrast::SkillsComb& rhs) -> bool {
         return lhs.efficient.at(m_product) > rhs.efficient.at(m_product);
     });
 
@@ -465,8 +473,9 @@ bool asst::InfrastProductionTask::optimal_calc()
         // necessary里的技能，一个都不能少
         // TODO necessary暂时没做hash校验。因为没有需要比hash的necessary干员（
         for (const infrast::SkillsComb& nec_skills : group.necessary) {
-            auto find_iter = ranges::find_if(cur_available_opers,
-                                             [&](const infrast::SkillsComb& arg) -> bool { return arg == nec_skills; });
+            auto find_iter = std::ranges::find_if(cur_available_opers, [&](const infrast::SkillsComb& arg) -> bool {
+                return arg == nec_skills;
+            });
             if (find_iter == cur_available_opers.cend()) {
                 group_unavailable = true;
                 break;
@@ -491,7 +500,7 @@ bool asst::InfrastProductionTask::optimal_calc()
             }
         }
 
-        ranges::sort(optional, [&](const infrast::SkillsComb& lhs, const infrast::SkillsComb& rhs) -> bool {
+        std::ranges::sort(optional, [&](const infrast::SkillsComb& lhs, const infrast::SkillsComb& rhs) -> bool {
             return lhs.efficient.at(m_product) > rhs.efficient.at(m_product);
         });
 
@@ -499,8 +508,10 @@ bool asst::InfrastProductionTask::optimal_calc()
         for (const infrast::SkillsComb& opt : optional) {
             auto find_iter = cur_available_opers.cbegin();
             while (cur_combs.size() != static_cast<size_t>(cur_max_num_of_opers)) {
-                find_iter = std::find_if(find_iter, cur_available_opers.cend(),
-                                         [&](const infrast::SkillsComb& arg) -> bool { return arg == opt; });
+                find_iter =
+                    std::find_if(find_iter, cur_available_opers.cend(), [&](const infrast::SkillsComb& arg) -> bool {
+                        return arg == opt;
+                    });
                 if (find_iter != cur_available_opers.cend()) {
                     bool hash_matched = false;
                     if (opt.name_filter.empty()) {
@@ -508,13 +519,13 @@ bool asst::InfrastProductionTask::optimal_calc()
                     }
                     else {
                         RegionOCRer name_analyzer(find_iter->name_img);
-                        name_analyzer.set_replace(Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_map,
-                                                  Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_full);
+                        name_analyzer.set_replace(
+                            Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_map,
+                            Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_full);
                         Log.trace("Analyze name filter");
                         if (name_analyzer.analyze()) {
                             std::string name = name_analyzer.get_result().text;
-                            hash_matched =
-                                ranges::find(opt.name_filter, name) != opt.name_filter.cend();
+                            hash_matched = std::ranges::find(opt.name_filter, name) != opt.name_filter.cend();
                         }
                         else {
                             hash_matched = false;
@@ -588,8 +599,7 @@ bool asst::InfrastProductionTask::opers_choose()
     auto& facility_info = InfrastData.get_facility_info(facility_name());
     int cur_max_num_of_opers = facility_info.max_num_of_opers - m_cur_num_of_locked_opers;
 
-    const int face_hash_thres =
-        std::dynamic_pointer_cast<HashTaskInfo>(Task.get("InfrastOperFaceHash"))->dist_threshold;
+    const int face_hash_thres = Task.get("InfrastOperFace")->special_params[0];
 
     int count = 0;
     int swipe_times = 0;
@@ -623,12 +633,13 @@ bool asst::InfrastProductionTask::opers_choose()
         auto cur_all_opers = oper_analyzer.get_result();
         Log.trace("before mood filter, opers size:", cur_all_opers.size());
         // 小于心情阈值的干员则不可用
-        std::erase_if(cur_all_opers,
-                      [&](const infrast::Oper& rhs) -> bool { return rhs.mood_ratio < m_mood_threshold; });
+        std::erase_if(cur_all_opers, [&](const infrast::Oper& rhs) -> bool {
+            return rhs.mood_ratio < m_mood_threshold;
+        });
         Log.trace("after mood filter, opers size:", cur_all_opers.size());
         for (auto opt_iter = m_optimal_combs.begin(); opt_iter != m_optimal_combs.end();) {
             Log.trace("to find", opt_iter->skills.begin()->names.front());
-            auto find_iter = ranges::find_if(cur_all_opers, [&](const infrast::Oper& lhs) -> bool {
+            auto find_iter = std::ranges::find_if(cur_all_opers, [&](const infrast::Oper& lhs) -> bool {
                 if (lhs.skills != opt_iter->skills) {
                     return false;
                 }
@@ -637,14 +648,16 @@ bool asst::InfrastProductionTask::opers_choose()
                 }
                 else {
                     RegionOCRer name_analyzer(lhs.name_img);
-                    name_analyzer.set_replace(Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_map,
-                                              Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_full);
+                    name_analyzer.set_replace(
+                        Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_map,
+                        Task.get<OcrTaskInfo>("CharsNameOcrReplace")->replace_full);
                     Log.trace("Analyze name filter");
                     if (!name_analyzer.analyze()) {
                         return false;
                     }
                     std::string name = name_analyzer.get_result().text;
-                    return ranges::find(std::as_const(opt_iter->name_filter), name) != opt_iter->name_filter.cend();
+                    return std::ranges::find(std::as_const(opt_iter->name_filter), name) !=
+                           opt_iter->name_filter.cend();
                 }
             });
 
@@ -667,7 +680,7 @@ bool asst::InfrastProductionTask::opers_choose()
                 ctrler()->click(find_iter->rect);
             }
             {
-                auto avlb_iter = ranges::find_if(m_all_available_opers, [&](const infrast::Oper& lhs) -> bool {
+                auto avlb_iter = std::ranges::find_if(m_all_available_opers, [&](const infrast::Oper& lhs) -> bool {
                     int dist = Hasher::hamming(lhs.face_hash, find_iter->face_hash);
                     Log.debug("opers_choose | face hash dist", dist);
                     return dist < face_hash_thres;
@@ -713,8 +726,8 @@ bool asst::InfrastProductionTask::use_drone()
     return task_temp.run();
 }
 
-asst::infrast::SkillsComb asst::InfrastProductionTask::efficient_regex_calc(
-    std::unordered_set<infrast::Skill> skills) const
+asst::infrast::SkillsComb
+    asst::InfrastProductionTask::efficient_regex_calc(std::unordered_set<infrast::Skill> skills) const
 {
     infrast::SkillsComb comb(std::move(skills));
     // 根据正则，计算当前干员的实际效率

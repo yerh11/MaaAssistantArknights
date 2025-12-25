@@ -2,10 +2,11 @@
 
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
+#include "Task/Fight/MedicineCounterTaskPlugin.h"
 #include "Utils/Logger.hpp"
 #include "Vision/OCRer.h"
 
-#include <regex>
+#include <boost/regex.hpp>
 
 bool asst::DrGrandetTaskPlugin::verify(AsstMsg msg, const json::value& details) const
 {
@@ -26,7 +27,19 @@ bool asst::DrGrandetTaskPlugin::_run()
 {
     LogTraceFunction;
 
-    int cur_ms = analyze_time_left(ctrler()->get_image());
+    const auto& image = ctrler()->get_image();
+
+    auto sanity_target = MedicineCounterTaskPlugin::get_target_of_sanity(image);
+    auto sanity_max = MedicineCounterTaskPlugin::get_maximun_of_sanity(image);
+    if (!sanity_target || !sanity_max) [[unlikely]] {
+        return false;
+    }
+
+    if (*sanity_target < *sanity_max) {
+        return true;
+    }
+
+    int cur_ms = analyze_time_left(image);
     if (cur_ms < 0) {
         return false;
     }
@@ -56,13 +69,15 @@ int asst::DrGrandetTaskPlugin::analyze_time_left(const cv::Mat& image)
     analyzer.set_use_char_model(false);
 
     if (!analyzer.analyze()) {
+        Log.warn(__FUNCTION__, "unable to analyze time");
         return -1;
     }
     auto text = analyzer.get_result().front().text;
 
-    auto regex = std::regex(R"((\d):(\d?)(\d?))");
-    std::smatch match;
-    if (!std::regex_search(text, match, regex)) {
+    auto regex = boost::regex(R"((\d):(\d?)(\d?))");
+    boost::smatch match;
+    if (!boost::regex_search(text, match, regex)) {
+        Log.warn(__FUNCTION__, "Unable to match time:", text);
         return -1;
     }
     std::string time = match.str(0);

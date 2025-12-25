@@ -1,6 +1,6 @@
 #include "TilePack.h"
 
-#include "Common/AsstConf.h"
+#include "MaaUtils/Conf.h"
 #include "meojson/json.hpp"
 
 #include <algorithm>
@@ -15,9 +15,9 @@
 #include <optional>
 #include <queue>
 
-ASST_SUPPRESS_CV_WARNINGS_START
+MAA_SUPPRESS_CV_WARNINGS_BEGIN
 #include <Arknights-Tile-Pos/TileCalc2.hpp>
-ASST_SUPPRESS_CV_WARNINGS_END
+MAA_SUPPRESS_CV_WARNINGS_END
 
 #include "Utils/Logger.hpp"
 
@@ -83,8 +83,7 @@ bool proc_data(
     return true;
 }
 
-asst::TilePack::result_type
-    asst::TilePack::calc_(const Map::Level& level, double shift_x, double shift_y)
+asst::TilePack::result_type asst::TilePack::calc_(const Map::Level& level, double shift_x, double shift_y)
 {
     LogTraceFunction;
 

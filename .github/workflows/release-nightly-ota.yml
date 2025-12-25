@@ -1,6 +1,8 @@
-name: release-nightly-ota
+name: Release Pipeline (Nightly OTA)
 
 on:
+  schedule:
+    - cron: "0 22 * * *" # Runs daily at 22:00 UTC
   workflow_dispatch:
     inputs:
       release_body:
@@ -11,76 +13,255 @@ on:
         description: "Commit to build (git checkout)"
         type: string
         required: false
-      limit:
+      limit_maa:
         description: "Number of releases to fetch from MaaAssistantArknights"
         required: true
-        default: 30
+        default: 10
         type: number
-      limit_2:
+      limit_maarelease:
         description: "Number of releases to fetch from MaaRelease"
         required: true
-        default: 30
+        default: 10
         type: number
 
 jobs:
   build-win-nightly:
+    name: Build Nightly for Windows
+    if: github.repository_owner == 'MaaAssistantArknights'
     runs-on: windows-latest
     strategy:
       matrix:
-        include:
-          - msbuild_target: x64
-            lowercase_target: x64
+        arch: [x64]
       fail-fast: false
-    env:
-      MAABUILDER_TARGET_PLATFORM: ${{ matrix.msbuild_target }}
     outputs:
       tag: ${{ steps.set_tag.outputs.tag }}
       pre_version: ${{ steps.set_tag.outputs.pre_version }}
       main_tag_name: ${{ steps.push_main_tag.outputs.main_tag_name }}
-      changelog: ${{ steps.generate_changelog.outputs.changelog }}
+      changelog: ${{ steps.read_changelog.outputs.content }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
           # repository: 'MaaAssistantArknights/MaaAssistantArknights'
-          submodules: recursive
           #ref: ${{ inputs.ref }}
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 250
 
-      - name: Checkout ref
+      - name: Fetch tags
         run: |
-          if ("${{ inputs.ref }}" -ne "") {
-            git checkout --progress --recurse-submodules ${{ inputs.ref || 'dev' }}
-          }
+          git fetch --depth=250 --tags
 
-      - name: Install semver
+      - name: Fetch submodules
         run: |
-          npm install --global --progress semver
+          git submodule update --init --depth 1 src/MaaUtils
+          git submodule update --init --depth 1 3rdparty/EmulatorExtras
 
-      - name: Set tag
+      - name: Checkout ref (if provided)
+        if: inputs.ref != ''
+        run: |
+          git checkout --progress --recurse-submodules ${{ inputs.ref }}
+
+      - name: Check for Changes and Set tag
         id: set_tag
         run: |
-          # pre_version是上一个公版，这里需要拉上一个tag，避免堆积过多commit
-          $latest_tag=$(git describe --tags --abbrev=0)
-          echo "latest_tag=$latest_tag" >> $env:GITHUB_OUTPUT
-          $described = $(git describe --tags --long --match 'v*')
-          $ids = $($described -split "-")
-          if ($ids.length -eq 3) {
-            $ver = "v$(semver --increment $ids[0].Substring(1))"
-            $pre_version = "$($ids[0])"
-            $dist = `printf "%03d"` $ids[1]
-            echo "tag=$ver-alpha.1.d$($dist).$($ids[2])" >> $env:GITHUB_OUTPUT
-            echo "pre_version=$pre_version" >> $env:GITHUB_OUTPUT
+          # Fetch the latest tag from the repository
+          $latest_tag = git describe --tags --abbrev=0
+
+          Write-Output "Previous Tag: $latest_tag"
+          Write-Output "latest_tag=$latest_tag" >> $env:GITHUB_OUTPUT
+
+          # Check for changes between the latest tag and HEAD
+          $recent_changes = git log "$latest_tag..HEAD" --oneline
+
+          if (-not $recent_changes) {
+            Write-Output "No commits. Cancelling workflow..."
+            Write-Output "cancel_run=true" >> $env:GITHUB_ENV
+            exit 0
+          } else {
+            Write-Output "Recent commits: $recent_changes"
+            Write-Output "Commits found. Continuing build..."
+            Write-Output "cancel_run=false" >> $env:GITHUB_ENV
+          }
+
+          # Get the full description of the current commit
+          $described = git describe --tags --long --match 'v*'
+          Write-Output "New Described: $described"
+          $ids = $described -split "-"
+
+          if ($ids.Length -eq 3) {
+            # Extract and parse the current version
+            $current_version = $ids[0].Substring(1)
+            $parts = $current_version -split '\.'
+            if ($parts.Length -ne 3) {
+              Write-Error "Invalid version format: $current_version. Expected 'major.minor.patch'."
+              exit 1
+            }
+
+            # Increment the patch version
+            $parts[2] = [int]$parts[2] + 1
+            $new_version = "$($parts[0]).$($parts[1]).$($parts[2])"
+
+            # Construct the new tag and pre_version
+            $ver = "v$new_version"
+            $pre_version = $ids[0]
+            $dist = "{0:D3}" -f [int]$ids[1]
+
+            Write-Output "pre_version=$pre_version" >> $env:GITHUB_OUTPUT
+            Write-Output "New Tag: $ver-alpha.1.d$dist.$($ids[2])"
+            Write-Output "tag=$ver-alpha.1.d$dist.$($ids[2])" >> $env:GITHUB_OUTPUT
+
             exit 0
           }
-          if ($ids.length -eq 4) {
-            $dist = `printf "%03d"` $ids[2]
-            $pre_version = "$($ids[0])""-""$($ids[1])"
-            echo "tag=$($ids[0])-$($ids[1]).d$($dist).$($ids[3])" >> $env:GITHUB_OUTPUT
-            echo "pre_version=$pre_version" >> $env:GITHUB_OUTPUT
+
+          if ($ids.Length -eq 4) {
+            $dist = "{0:D3}" -f [int]$ids[2]
+            $pre_version = "$($ids[0])-$($ids[1])"
+
+            Write-Output "Pre Version: $pre_version"
+            Write-Output "pre_version=$pre_version" >> $env:GITHUB_OUTPUT
+
+            Write-Output "tag: $pre_version.d$dist.$($ids[3])"
+            Write-Output "tag=$pre_version.d$dist.$($ids[3])" >> $env:GITHUB_OUTPUT
+
             exit 0
           }
+
           exit 1
+
+      - name: Stop if no changes
+        if: env.cancel_run == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -L -X POST `
+            -H "Accept: application/vnd.github+json" `
+            -H "Authorization: Bearer ${{ secrets.MAA_ACTION_READ_WRITE }}" `
+            -H "X-GitHub-Api-Version: 2022-11-28" `
+            "https://api.github.com/repos/MaaAssistantArknights/MaaAssistantArknights/actions/runs/${{ github.run_id }}/cancel" > $null
+
+          gh run watch ${{ github.run_id }}
+
+      - name: Generate changelog
+        id: generate_changelog
+        run: |
+          python3 tools/ChangelogGenerator/changelog_generator.py --latest "${{ steps.set_tag.outputs.latest_tag }}" --tag "${{ steps.set_tag.outputs.tag }}"
+          Get-Content .\changelog.md | Select-Object -Skip 2 | Out-File -FilePath changelog_notag.md -Encoding utf8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONIOENCODING: "utf-8"
+
+      - name: Stop if no changes
+        if: steps.generate_changelog.outputs.cancel_run == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -L -X POST `
+            -H "Accept: application/vnd.github+json" `
+            -H "Authorization: Bearer ${{ secrets.MAA_ACTION_READ_WRITE }}" `
+            -H "X-GitHub-Api-Version: 2022-11-28" `
+            "https://api.github.com/repos/MaaAssistantArknights/MaaAssistantArknights/actions/runs/${{ github.run_id }}/cancel" > $null
+
+          gh run watch ${{ github.run_id }}
+
+      - name: Read changelog to variable
+        id: read_changelog
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: ./changelog_notag.md
+
+      - name: Cache MaaDeps
+        id: cache-maadeps
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ./src/MaaUtils/MaaDeps
+          key: ${{ runner.os }}-${{ matrix.arch }}-maadeps-${{ hashFiles('tools/maadeps-download.py') }}
+
+      - name: Bootstrap MaaDeps
+        if: steps.cache-maadeps.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/maadeps-download.py ${{ matrix.arch }}-windows
+
+      - name: Config cmake
+        run: |
+          mkdir -p build
+          cmake -B build ${{ matrix.arch == 'arm64' && '-A ARM64' }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMAADEPS_TRIPLET='maa-${{ matrix.arch }}-windows' -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=ON -DMAA_HASH_VERSION='${{ steps.set_tag.outputs.tag }}' -DBUILD_WPF_GUI=OFF
+
+      - name: Build
+        run: |
+          cmake --build build --config RelWithDebInfo --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Install
+        run: |
+          mkdir -p install
+          cmake --install build --prefix install --config RelWithDebInfo
+
+      - name: Cache .nuke/temp, ~/.nuget/packages
+        id: cache-nuget
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            .nuke/temp
+            ~/.nuget/packages
+          key: ${{ runner.os }}-${{ matrix.arch }}-nuget-${{ hashFiles('**/*.csproj') }}
+
+      - name: Restore dependencies
+        if: steps.cache-nuget.outputs.cache-hit != 'true'
+        run: dotnet restore src/MaaWpfGui/MaaWpfGui.csproj
+
+      - name: Taggify version for csproj
+        run: |
+          $csprojPath = "src/MaaWpfGui/MaaWpfGui.csproj"
+          $csprojPath = Resolve-Path -Path $csprojPath
+          $tag = '${{ steps.set_tag.outputs.tag }}' -replace '.*?/', ''
+          if ($tag -match '\d+(\.\d+){1,3}') {
+              $match = $Matches[0]
+          } else {
+              $match = "0.0.1"
+          }
+          [xml]$csproj = Get-Content -Path $csprojPath
+          $node = $csproj.Project.PropertyGroup | where {$_.ApplicationVersion -ne $null}
+          $node.InformationalVersion = $tag
+          $node.Version = $match
+          $node.FileVersion = $match
+          $node.AssemblyVersion = $match
+          $csproj.Save($csprojPath)
+
+      - name: Publish WPF GUI
+        run: |
+          dotnet publish src/MaaWpfGui/MaaWpfGui.csproj -c Release -p:Platform=${{ matrix.arch == 'arm64' && 'ARM64' || 'x64' }} -o install
+
+      - name: Collect PDB files
+        run: |
+          cp build/bin/RelWithDebInfo/*.pdb install/
+          Compress-Archive -Path install/*.pdb -DestinationPath install/MAAComponent-DebugSymbol-${{ steps.set_tag.outputs.tag }}-win-${{ matrix.arch }}.zip
+        continue-on-error: true
+
+      - name: Upload PDB files
+        uses: actions/upload-artifact@v6
+        with:
+          name: MAAComponent-DebugSymbol-win-${{ matrix.arch }}
+          path: install/MAAComponent-DebugSymbol-${{ steps.set_tag.outputs.tag }}-win-${{ matrix.arch }}.zip
+
+      - name: Organize install files
+        shell: bash
+        run: |
+          rm -rf install/MAAComponent-DebugSymbol-*.zip
+          rm -rf install/*.pdb
+          rm -rf install/msvc-debug
+          rm -rf install/*.h
+
+          cp tools/DependencySetup_依赖库安装.bat install
+
+      - name: Upload MAA to GitHub
+        uses: actions/upload-artifact@v6
+        with:
+          name: MAA-win-${{ matrix.arch }}
+          path: install
 
       - name: Push tag to main repo
         id: push_main_tag
@@ -93,81 +274,14 @@ jobs:
           git push --tags origin HEAD:refs/tags/$main_tag_name -f
           echo "main_tag_name=$main_tag_name" >> $env:GITHUB_OUTPUT
 
-      - name: Generate Changelog
-        id: generate_changelog
-        run: |
-          python3 tools/ChangelogGenerator/changelog_generator.py --latest "${{ steps.set_tag.outputs.latest_tag }}" --tag "${{ steps.set_tag.outputs.tag }}"
-          $content=$(((Get-Content .\changelog.md) | Select-Object -Skip 2) -join "\n\n") 
-          echo "changelog=$content" >> $env:GITHUB_OUTPUT
-          echo $content
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PYTHONIOENCODING: "utf-8"
-
-      - name: Cache .nuke/temp, ~/.nuget/packages
-        id: cache-nuget
-        uses: actions/cache@v4
-        with:
-          path: |
-            .nuke/temp
-            ~/.nuget/packages
-          key: ${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj') }}
-
-      - name: Restore dependencies
-        if: steps.cache-nuget.outputs.cache-hit != 'true'
-        run: dotnet restore
-
-      - name: Bootstrap MaaDeps
-        run: |
-          python3 maadeps-download.py ${{ matrix.lowercase_target }}-windows
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Taggify Version
-        run: |
-          $csprojPath = "src/MaaWpfGui/MaaWpfGui.csproj"
-          $csprojPath = Resolve-Path -Path $csprojPath
-          $tag = '${{ steps.set_tag.outputs.tag }}' -replace '.*?/', ''
-          if ($tag -match '\d+(\.\d+){1,3}') {
-              $match = $Matches[0]
-          } else {
-              $match = "0.0.1"
-          }
-          echo "Tag value: $tag"
-          echo "Version value: $match"
-          [xml]$csproj = Get-Content -Path $csprojPath
-          $node = $csproj.Project.PropertyGroup | where {$_.ApplicationVersion -ne $null}
-          $node.InformationalVersion = $tag
-          $node.Version = $match
-          $node.FileVersion = $match
-          $node.AssemblyVersion = $match
-          $csproj.Save($csprojPath)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run './build.cmd DevBuild'
-        run: |
-          $env:GITHUB_WORKFLOW = 'dev-build-win' # pretend this is a dev-build-win workflow
-          $env:MAA_BUILDER_MAA_VERSION = "${{ steps.set_tag.outputs.tag }}"
-          echo "tag: " $env:MAA_BUILDER_MAA_VERSION
-
-          ./build.cmd DevBuild
-        env:
-          Reason: "Build nightly version"
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload MAA to Github
-        uses: actions/upload-artifact@v4
-        with:
-          name: MAA-win-${{ matrix.lowercase_target }}
-          path: artifacts
-
   push-tag:
+    name: Push Tag to MaaRelease
+    if: github.repository_owner == 'MaaAssistantArknights'
     needs: build-win-nightly
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch MaaRelease
-        uses: actions/checkout@v4
+      - name: Checkout MaaRelease
+        uses: actions/checkout@v6
         with:
           repository: ${{ format('{0}/{1}', github.repository_owner, 'MaaRelease') }}
           fetch-depth: 0
@@ -185,35 +299,46 @@ jobs:
           git push --tags origin HEAD:refs/tags/${{ needs.build-win-nightly.outputs.tag }}
 
   make-ota:
+    name: Build and Upload Nightly OTA for Windows
+    if: github.repository_owner == 'MaaAssistantArknights'
     needs: [build-win-nightly, push-tag]
     strategy:
       matrix:
         target: [x64]
     runs-on: ubuntu-latest
     steps:
-      - name: Echo tag version
+      - name: Show tag version
         run: |
           echo ${{ needs.build-win-nightly.outputs.tag }}
 
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
           path: MaaAssistantArknights
           token: ${{ secrets.MAARELEASE_RELEASE }}
           show-progress: false
 
-      - name: Download MAA from Github
-        uses: actions/download-artifact@v4
+      - name: Download MAA from GitHub
+        uses: actions/download-artifact@v7
         with:
           name: MAA-win-${{ matrix.target }}
           path: ${{ format('{0}/{1}', 'build-ota', needs.build-win-nightly.outputs.tag) }}
 
-      - name: Fetch release info
+      - name: Fetch release information
         run: |
           mkdir -pv build-ota && cd build-ota
 
-          gh release list --repo 'MaaAssistantArknights/MaaAssistantArknights' --limit ${{ inputs.limit || 30 }} | tee ./release_maa.txt
-          gh release list --repo "${{ github.repository_owner }}/MaaRelease" --limit ${{ inputs.limit_2 || 30 }} | tee ./release_mr.txt
+          # Convert inputs to integers
+          limit_maa=${{ inputs.limit_maa || 10 }}
+          limit_maa=${limit_maa%.*}
+          echo "Parsed limit_maa: $limit_maa"
+
+          limit_maarelease=${{ inputs.limit_maarelease || 10 }}
+          limit_maarelease=${limit_maarelease%.*}
+          echo "Parsed limit_maarelease: $limit_maarelease"
+
+          gh release list --repo 'MaaAssistantArknights/MaaAssistantArknights' --limit $limit_maa | tee ./release_maa.txt
+          gh release list --repo "${{ github.repository_owner }}/MaaRelease" --limit $limit_maarelease | tee ./release_mr.txt
           echo ${{ needs.build-win-nightly.outputs.tag }} > ./config
 
           cat ./release_maa.txt | awk '{ print $1 }' > ./tags_maa.txt
@@ -233,30 +358,13 @@ jobs:
           cd build-ota
 
           pushd ${{ needs.build-win-nightly.outputs.tag }}
-          zip -d *.zip '*.lib' '*.pdb' '*.exp' '*.config' '*.xml'
-          mv *.zip MAA-${{ env.release_tag }}-win-${{ matrix.target }}.zip
+          zip -r MAA-${{ env.release_tag }}-win-${{ matrix.target }}.zip ./*
           popd
 
           $GITHUB_WORKSPACE/MaaAssistantArknights/tools/OTAPacker/build.sh 'MaaAssistantArknights/MaaAssistantArknights' ./config ${{ matrix.target }} "${{ github.repository_owner }}/MaaRelease"
           mv -v ${{ needs.build-win-nightly.outputs.tag }}/*.zip ./MAA-${{ env.release_tag }}-win-${{ matrix.target }}.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Make release body
-        id: make_release_body
-        shell: bash
-        run: |
-          pre_version=${{ needs.build-win-nightly.outputs.pre_version }}
-          cur_version=${{ needs.build-win-nightly.outputs.main_tag_name }}
-          echo -e "${{ inputs.release_body || '' }}\n\n${{ needs.build-win-nightly.outputs.changelog }}\n\n**Full Changelog**: [$pre_version -> $cur_version](https://github.com/$GITHUB_REPOSITORY/compare/$pre_version...$cur_version)" > alpha_changelog.md
-          export r=$(cat alpha_changelog.md)
-
-          # https://github.com/svenstaro/upload-release-action
-          r="${r//'%'/'%25'}"                               # Multiline escape sequences for %
-          r="${r//$'\n'/'%0A'}"                             # Multiline escape sequences for '\n'
-          r="${r//$'\r'/'%0D'}"                             # Multiline escape sequences for '\r'
-          echo $r
-          echo "full_release_body=$r" >> $GITHUB_OUTPUT
 
       - name: Upload to MaaRelease
         uses: svenstaro/upload-release-action@v2
@@ -268,10 +376,17 @@ jobs:
           tag: ${{ env.release_tag }}
           prerelease: true
           overwrite: true
-          body: ${{ steps.make_release_body.outputs.full_release_body }}
+          body: |
+            ${{ inputs.release_body || '' }}
+
+            ${{ needs.build-win-nightly.outputs.changelog }}
+
+            **Full Changelog**: [${{ needs.build-win-nightly.outputs.pre_version }} -> ${{ needs.build-win-nightly.outputs.main_tag_name }}](https://github.com/${{ github.repository }}/compare/${{ needs.build-win-nightly.outputs.pre_version }}...${{ needs.build-win-nightly.outputs.main_tag_name }})
 
       - name: Setup release mirror
         run: |
           gh workflow --repo MaaAssistantArknights/MaaRelease run release-mirrors.yml
+          gh workflow --repo MaaAssistantArknights/MaaRelease run mirrorchyan_alpha.yml
+          gh workflow --repo MaaAssistantArknights/MaaRelease run mirrorchyan_alpha_release_note.yml
         env:
           GH_TOKEN: ${{ secrets.MISTEOWORKFLOW }}

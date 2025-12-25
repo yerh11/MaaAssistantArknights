@@ -1,6 +1,6 @@
 #include "PipelineAnalyzer.h"
 
-#include <regex>
+#include <boost/regex.hpp>
 #include <utility>
 
 #include "Config/TaskData.h"
@@ -25,7 +25,7 @@ PipelineAnalyzer::ResultOpt PipelineAnalyzer::analyze() const
             continue;
         }
 
-        Log.trace(__FUNCTION__, task_ptr->name);
+        // Log.trace(__FUNCTION__, task_ptr->name);
         switch (task_ptr->algorithm) {
         case AlgorithmType::JustReturn: {
             return Result { .task_ptr = task_ptr };
@@ -33,12 +33,20 @@ PipelineAnalyzer::ResultOpt PipelineAnalyzer::analyze() const
 
         case AlgorithmType::MatchTemplate:
             if (auto match_opt = match(task_ptr)) {
+                Log.trace(__FUNCTION__, "| MatchTemplate", task_ptr->name);
                 return Result { .task_ptr = task_ptr, .result = *match_opt, .rect = match_opt->rect };
             }
             break;
         case AlgorithmType::OcrDetect:
             if (auto ocr_opt = ocr(task_ptr)) {
+                Log.trace(__FUNCTION__, "| OcrDetect", task_ptr->name, *ocr_opt);
                 return Result { .task_ptr = task_ptr, .result = ocr_opt->front(), .rect = ocr_opt->front().rect };
+            }
+            break;
+        case AlgorithmType::FeatureMatch:
+            if (auto match_opt = feature_match(task_ptr)) {
+                Log.trace(__FUNCTION__, "| FeatureMatch", task_ptr->name);
+                return Result { .task_ptr = task_ptr, .result = match_opt->front(), .rect = match_opt->front().rect };
             }
             break;
         default:
@@ -53,7 +61,7 @@ Matcher::ResultOpt PipelineAnalyzer::match(const std::shared_ptr<TaskInfo>& task
     Matcher match_analyzer(m_image, m_roi);
 
     const auto match_task_ptr = std::dynamic_pointer_cast<MatchTaskInfo>(task_ptr);
-    if (ranges::all_of(match_task_ptr->templ_thresholds, [](double t) { return t > 1.0; })) {
+    if (std::ranges::all_of(match_task_ptr->templ_thresholds, [](double t) { return t > 1.0; })) {
         Log.info(match_task_ptr->name, "'s threshold is", match_task_ptr->templ_thresholds, ", just skip");
         return std::nullopt;
     }
@@ -124,4 +132,30 @@ OCRer::ResultsVecOpt PipelineAnalyzer::ocr(const std::shared_ptr<TaskInfo>& task
     }
 
     return result_vec;
+}
+
+FeatureMatcher::ResultsVecOpt asst::PipelineAnalyzer::feature_match(const std::shared_ptr<TaskInfo>& task_ptr) const
+{
+    FeatureMatcher match_analyzer(m_image, m_roi);
+
+    const auto match_task_ptr = std::dynamic_pointer_cast<FeatureMatchTaskInfo>(task_ptr);
+    match_analyzer.set_task_info(match_task_ptr);
+
+    bool use_cache = m_inst && match_task_ptr->cache;
+    if (use_cache) {
+        auto cache_opt = status()->get_rect(match_task_ptr->name);
+        if (cache_opt) {
+            match_analyzer.set_roi(*cache_opt);
+        }
+    }
+
+    const auto& result_opt = match_analyzer.analyze();
+    if (!result_opt) {
+        return std::nullopt;
+    }
+    if (use_cache && !result_opt->empty()) {
+        status()->set_rect(match_task_ptr->name, result_opt->front().rect);
+    }
+
+    return result_opt;
 }

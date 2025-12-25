@@ -1,10 +1,17 @@
 // <copyright file="Types.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MAA project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License v3.0 only as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY
 // </copyright>
-using System;
-using System.Runtime.InteropServices;
 
+#pragma warning disable CS0649, SA1307, SA1602, SA1649
 namespace MaaWpfGui.WineCompat.FontConfig;
 
 internal enum FcResult
@@ -13,7 +20,7 @@ internal enum FcResult
     NoMatch,
     TypeMismatch,
     NoId,
-    OutOfMemory
+    OutOfMemory,
 }
 
 internal enum FcMatchKind
@@ -22,7 +29,7 @@ internal enum FcMatchKind
     Font,
     Scan,
     FcMatchKindEnd,
-    FcMatchKindBegin = Pattern
+    FcMatchKindBegin = Pattern,
 }
 
 internal unsafe struct FcFontSet
@@ -32,13 +39,21 @@ internal unsafe struct FcFontSet
     public FcPattern** fonts;
 }
 
-internal struct FcConfig { }
-internal struct FcPattern { }
-internal struct FcCharSet { }
+internal struct FcConfig
+{
+}
+
+internal struct FcPattern
+{
+}
+
+internal struct FcCharSet
+{
+}
 
 internal enum FcBool
 {
     False,
     True,
-    DontCare
+    DontCare,
 }

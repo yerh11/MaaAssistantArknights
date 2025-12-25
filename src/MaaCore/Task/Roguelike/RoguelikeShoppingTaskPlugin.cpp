@@ -1,10 +1,11 @@
 #include "RoguelikeShoppingTaskPlugin.h"
 
+#include <array>
+
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Config/Roguelike/RoguelikeShoppingConfig.h"
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
-#include "Status.h"
 #include "Task/ProcessTask.h"
 #include "Utils/Logger.hpp"
 #include "Vision/Matcher.h"
@@ -16,18 +17,16 @@ bool asst::RoguelikeShoppingTaskPlugin::verify(AsstMsg msg, const json::value& d
         return false;
     }
 
-    if (!RoguelikeConfig::is_valid_theme(m_config->get_theme())) {
-        Log.error("Roguelike name doesn't exist!");
+    if (!details.get("details", "task", "").ends_with("Roguelike@TraderRandomShopping")) {
         return false;
     }
-
-    if (details.get("details", "task", "").ends_with("Roguelike@TraderRandomShopping")) {
-        return m_config->get_mode() != RoguelikeMode::Investment
-               || m_config->get_invest_with_more_score();
+    else if (m_config->get_mode() == RoguelikeMode::Investment) {
+        return m_config->get_invest_with_more_score();
     }
-    else {
-        return false;
+    else if (m_config->get_mode() == RoguelikeMode::Collectible) {
+        return m_config->get_collectible_mode_shopping();
     }
+    return true;
 }
 
 bool asst::RoguelikeShoppingTaskPlugin::_run()
@@ -35,12 +34,22 @@ bool asst::RoguelikeShoppingTaskPlugin::_run()
     LogTraceFunction;
 
     buy_once();
-
-    if (m_config->get_theme() == RoguelikeTheme::Sami && m_config->get_mode() == RoguelikeMode::Exp ) {
-        //点击刷新
-        ProcessTask(*this, { m_config->get_theme() + "@Roguelike@StageTraderRefresh" }).run();
-        buy_once();
+    const auto& theme = m_config->get_theme();
+    if ((theme == RoguelikeTheme::Sami || theme == RoguelikeTheme::Sarkaz) &&
+        // 界园可能没有免费刷新，先不进这里
+        m_config->get_mode() == RoguelikeMode::Exp) {
+        // 点击刷新
+        sleep(500);
+        bool ret = ProcessTask(*this, { theme + "@Roguelike@StageTraderRefresh" }).run();
+        ret = ret && ProcessTask(*this, { theme + "@Roguelike@StageTraderRefreshConfirm" })
+                         .set_retry_times(RetryTimesDefault)
+                         .run();
+        if (ret) {
+            buy_once();
+        }
     }
+
+    sleep(1000);
 
     return true;
 }
@@ -56,13 +65,13 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
         return false;
     }
 
-    bool no_longer_buy = m_config->get_trader_no_longer_buy();
+    bool no_longer_buy = m_config->status().trader_no_longer_buy;
 
     std::unordered_map<battle::Role, size_t> map_roles_count;
-    std::unordered_map<battle::Role, size_t> map_wait_promotion;
+    std::unordered_map<battle::Role, std::array<size_t, 6>> map_wait_promotion;
     size_t total_wait_promotion = 0;
     std::unordered_set<std::string> chars_list;
-    for (const auto& [name, oper] : m_config->get_oper()) {
+    for (const auto& [name, oper] : m_config->status().opers) {
         int elite = oper.elite;
         int level = oper.level;
         Log.info(name, elite, level);
@@ -77,10 +86,12 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
         if (name == "阿米娅") {
             map_roles_count[battle::Role::Caster] += 1;
             map_roles_count[battle::Role::Warrior] += 1;
+            map_roles_count[battle::Role::Medic] += 1;
             if (elite == 1 && level == 70) {
                 total_wait_promotion += 1;
-                map_wait_promotion[battle::Role::Caster] += 1;
-                map_wait_promotion[battle::Role::Warrior] += 1;
+                map_wait_promotion[battle::Role::Caster][5 - 1] += 1;
+                map_wait_promotion[battle::Role::Warrior][5 - 1] += 1;
+                map_wait_promotion[battle::Role::Medic][5 - 1] += 1;
             }
         }
         else {
@@ -88,13 +99,12 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
             map_roles_count[role] += 1;
 
             static const std::unordered_map<int, int> RarityPromotionLevel = {
-                { 0, INT_MAX }, { 1, INT_MAX }, { 2, INT_MAX }, { 3, INT_MAX },
-                { 4, 60 },      { 5, 70 },      { 6, 80 },
+                { 0, INT_MAX }, { 1, INT_MAX }, { 2, INT_MAX }, { 3, INT_MAX }, { 4, 60 }, { 5, 70 }, { 6, 80 },
             };
             int rarity = BattleData.get_rarity(name);
             if (elite == 1 && level >= RarityPromotionLevel.at(rarity)) {
                 total_wait_promotion += 1;
-                map_wait_promotion[role] += 1;
+                map_wait_promotion[role][rarity - 1] += 1;
             }
         }
     }
@@ -113,10 +123,9 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
 
     // bool bought = false;
     auto& all_goods = RoguelikeShopping.get_goods(m_config->get_theme());
-    std::vector<std::string> all_foldartal =
-        m_config->get_theme() == RoguelikeTheme::Sami
-            ? Task.get<OcrTaskInfo>("Sami@Roguelike@FoldartalGainOcr")->text
-            : std::vector<std::string>();
+    std::vector<std::string> all_foldartal = m_config->get_theme() == RoguelikeTheme::Sami
+                                                 ? Task.get<OcrTaskInfo>("Sami@Roguelike@FoldartalGainOcr")->text
+                                                 : std::vector<std::string>();
     for (const auto& goods : all_goods) {
         if (need_exit()) {
             return false;
@@ -125,9 +134,13 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
             continue;
         }
 
-        auto find_it = ranges::find_if(result, [&](const TextRect& tr) -> bool {
-            return tr.text.find(goods.name) != std::string::npos
-                   || goods.name.find(tr.text) != std::string::npos;
+        // 在萨米肉鸽刷坍缩范式时不再购买会减少坍缩值的藏品
+        if (m_config->get_mode() == RoguelikeMode::CLP_PDS && goods.decrease_collapse) {
+            continue;
+        }
+
+        auto find_it = std::ranges::find_if(result, [&](const TextRect& tr) -> bool {
+            return tr.text.find(goods.name) != std::string::npos || goods.name.find(tr.text) != std::string::npos;
         });
         if (find_it == result.cend()) {
             continue;
@@ -142,42 +155,49 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
                 }
             }
             if (!role_matched) {
-                Log.trace(
-                    "Ready to buy",
-                    goods.name,
-                    ", but there is no such professional operator, skip");
+                Log.trace("Ready to buy", goods.name, ", but there is no such professional operator, skip");
                 continue;
             }
         }
 
         if (goods.promotion != 0) {
             if (total_wait_promotion == 0) {
-                Log.trace(
-                    "Ready to buy",
-                    goods.name,
-                    ", but there is no one waiting for promotion, skip");
+                Log.trace("Ready to buy", goods.name, ", but there is no one waiting for promotion, skip");
                 continue;
             }
             if (!goods.roles.empty()) {
                 bool role_matched = false;
                 for (const auto& role : goods.roles) {
-                    if (map_wait_promotion[role] != 0) {
+                    size_t sum_wait_promotion = 0;
+                    for (int rarity = 0; rarity < goods.promotion_rarity; ++rarity) {
+                        sum_wait_promotion += map_wait_promotion[role][rarity];
+                    }
+                    if (sum_wait_promotion != 0) {
                         role_matched = true;
                         break;
                     }
                 }
                 if (!role_matched) {
-                    Log.trace(
-                        "Ready to buy",
-                        goods.name,
-                        ", but there is no one waiting for promotion, skip");
+                    Log.trace("Ready to buy", goods.name, ", but there is no one waiting for promotion, skip");
+                    continue;
+                }
+            }
+            else {
+                size_t sum_wait_promotion = 0;
+                for (const auto& [role, arr] : map_wait_promotion) {
+                    for (int rarity = 0; rarity < goods.promotion_rarity; ++rarity) {
+                        sum_wait_promotion += arr[rarity];
+                    }
+                }
+                if (sum_wait_promotion == 0) {
+                    Log.trace("Ready to buy", goods.name, ", but there is no one waiting for promotion, skip");
                     continue;
                 }
             }
         }
 
         if (!goods.chars.empty()) {
-            if (ranges::find_first_of(chars_list, goods.chars) == chars_list.cend()) {
+            if (std::ranges::find_first_of(chars_list, goods.chars) == chars_list.cend()) {
                 Log.trace("Ready to buy", goods.name, ", but there is no such character, skip");
                 continue;
             }
@@ -192,14 +212,14 @@ bool asst::RoguelikeShoppingTaskPlugin::buy_once()
         if (m_config->get_theme() == RoguelikeTheme::Sami) {
             auto iter = std::find(all_foldartal.begin(), all_foldartal.end(), goods.name);
             if (iter != all_foldartal.end()) {
-                auto foldartal = m_config->get_foldartal();
                 // 把goods.name存到密文板overview里
-                foldartal.emplace_back(goods.name);
-                m_config->set_foldartal(std::move(foldartal));
+                m_config->status().foldartal_list.emplace_back(goods.name);
             }
         }
+        // 把goods.name存到已获得藏品里
+        m_config->status().collections.emplace_back(goods.name);
         if (goods.no_longer_buy) {
-            m_config->set_trader_no_longer_buy(true);
+            m_config->status().trader_no_longer_buy = true;
         }
         break;
     }

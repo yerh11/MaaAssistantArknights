@@ -1,6 +1,6 @@
 // <copyright file="NotificationImplWpf.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -13,9 +13,7 @@
 
 using System;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using Notification.Wpf;
 using Notification.Wpf.Base;
 using Notification.Wpf.Constants;
@@ -26,8 +24,8 @@ namespace MaaWpfGui.Helper.Notification;
 
 internal class NotificationImplWpf : INotificationPoster
 {
-    private NotificationManager _notificationManager = new NotificationManager();
-    private BrushConverter _brushConverter = new BrushConverter();
+    private readonly NotificationManager _notificationManager = new();
+    private readonly BrushConverter _brushConverter = new();
 
     public event EventHandler<string> ActionActivated;
 
@@ -65,7 +63,6 @@ internal class NotificationImplWpf : INotificationPoster
     };
 
     #endregion 通知基本字体样式和内容模板
-
 
     public void ShowNotification(NotificationContent content)
     {

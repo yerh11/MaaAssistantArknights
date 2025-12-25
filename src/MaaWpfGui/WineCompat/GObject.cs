@@ -1,6 +1,6 @@
 // <copyright file="GObject.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -11,24 +11,21 @@
 // but WITHOUT ANY WARRANTY
 // </copyright>
 
-using System;
-
 using static MaaWpfGui.WineCompat.MaaDesktopIntegration;
 
-namespace MaaWpfGui.WineCompat
+namespace MaaWpfGui.WineCompat;
+
+internal class GObject
 {
-    internal class GObject
+    public nint Handle { get; }
+
+    protected GObject(nint handle)
     {
-        public nint Handle { get; }
+        Handle = handle;
+    }
 
-        protected GObject(nint handle)
-        {
-            Handle = handle;
-        }
-
-        ~GObject()
-        {
-            g_object_unref(Handle);
-        }
+    ~GObject()
+    {
+        g_object_unref(Handle);
     }
 }

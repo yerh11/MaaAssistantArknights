@@ -3,8 +3,8 @@
 #include "Config/Miscellaneous/ItemConfig.h"
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
+#include "MaaUtils/ImageIo.h"
 #include "StageDropsTaskPlugin.h"
-#include "Utils/ImageIo.hpp"
 #include "Utils/Logger.hpp"
 #include "Vision/Matcher.h"
 #include "Vision/Miscellaneous/StageDropsImageAnalyzer.h"
@@ -57,7 +57,9 @@ void asst::StageQueueMissionCompletedTaskPlugin::mission_completed()
     auto&& [code, difficulty] = analyzer.get_stage_key();
 
     std::string stage_code = std::move(code);
-    ranges::transform(stage_code, stage_code.begin(), [](char ch) -> char { return static_cast<char>(::toupper(ch)); });
+    std::ranges::transform(stage_code, stage_code.begin(), [](char ch) -> char {
+        return static_cast<char>(::toupper(ch));
+    });
 
     Log.info(__FUNCTION__, "Stage Code:", stage_code, "Stars:", analyzer.get_stars());
 
@@ -68,10 +70,12 @@ void asst::StageQueueMissionCompletedTaskPlugin::mission_completed()
 
     drop_info_callback(stage_code, difficulty, analyzer);
 }
+
 // 抄自StageDropsTaskPlugin
-void asst::StageQueueMissionCompletedTaskPlugin::drop_info_callback(std::string stage_code,
-                                                                StageDifficulty stage_difficulty,
-                                                                StageDropsImageAnalyzer analyzer)
+void asst::StageQueueMissionCompletedTaskPlugin::drop_info_callback(
+    std::string stage_code,
+    StageDifficulty stage_difficulty,
+    StageDropsImageAnalyzer analyzer)
 {
     LogTraceFunction;
 
@@ -122,27 +126,32 @@ void asst::StageQueueMissionCompletedTaskPlugin::drop_info_callback(std::string 
         upload_to_penguin(stage_code, analyzer.get_stars());
     }
 }
+
 bool asst::StageQueueMissionCompletedTaskPlugin::set_server(std::string server)
 {
     m_server = std::move(server);
     return true;
 }
+
 bool asst::StageQueueMissionCompletedTaskPlugin::set_enable_penguin(bool enable)
 {
     m_enable_penguin = enable;
     return true;
 }
+
 bool asst::StageQueueMissionCompletedTaskPlugin::set_penguin_id(std::string id)
 {
     m_penguin_id = std::move(id);
     return true;
 }
+
 bool asst::StageQueueMissionCompletedTaskPlugin::set_enable_yituliu(bool enable)
 {
     // 暂时没用上，其他地方加了这里也加一个
     m_enable_yituliu = enable;
     return true;
 }
+
 void asst::StageQueueMissionCompletedTaskPlugin::upload_to_penguin(std::string stage_code, int stars)
 {
     LogTraceFunction;
@@ -184,7 +193,7 @@ void asst::StageQueueMissionCompletedTaskPlugin::upload_to_penguin(std::string s
             callback(AsstMsg::SubTaskError, cb_info);
             return;
         }
-        if (ranges::find(filter, drop_type) == filter.cend()) {
+        if (std::ranges::find(filter, drop_type) == filter.cend()) {
             continue;
         }
         if (drop.at("itemId").as_string().empty()) {
@@ -204,6 +213,18 @@ void asst::StageQueueMissionCompletedTaskPlugin::upload_to_penguin(std::string s
         extra_headers.insert({ "authorization", "PenguinID " + m_penguin_id });
     }
 
+    std::string version = Version;
+    if (version.find("DEBUG VERSION") != std::string::npos) {
+        version = "dev";
+    }
+    else if (!version.empty() && version[0] == 'v') {
+        version.erase(0, 1);
+    }
+
+    version.erase(std::ranges::remove(version, ' ').begin(), version.end());
+
+    extra_headers.insert({ "User-Agent", std::string("MaaAssistantArknights/") + version });
+
     if (!m_report_penguin_task_ptr) {
         m_report_penguin_task_ptr = std::make_shared<ReportDataTask>(report_penguin_callback, this);
     }
@@ -214,19 +235,17 @@ void asst::StageQueueMissionCompletedTaskPlugin::upload_to_penguin(std::string s
         .set_retry_times(5)
         .run();
 }
-void asst::StageQueueMissionCompletedTaskPlugin::report_penguin_callback(AsstMsg msg, const json::value& detail,
-                                                                     AbstractTask* task_ptr)
+
+void asst::StageQueueMissionCompletedTaskPlugin::report_penguin_callback(
+    AsstMsg msg,
+    const json::value& detail,
+    AbstractTask* task_ptr)
 {
     LogTraceFunction;
 
     auto p_this = dynamic_cast<StageQueueMissionCompletedTaskPlugin*>(task_ptr);
     if (!p_this) {
         return;
-    }
-
-    if (msg == AsstMsg::SubTaskExtraInfo && detail.get("what", std::string()) == "PenguinId") {
-        std::string id = detail.get("details", "id", std::string());
-        p_this->m_penguin_id = id;
     }
 
     p_this->callback(msg, detail);

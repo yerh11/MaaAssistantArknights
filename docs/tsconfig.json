@@ -1,5 +1,12 @@
 {
-    "include": [
-        ".vuepress/**/*.ts"
-    ]
+    "compilerOptions": {
+        "module": "ESNext",
+        "target": "ESNext",
+        "moduleResolution": "bundler",
+        "types": ["vite/client"],
+        "strict": true,
+        "noEmit": true,
+        "allowImportingTsExtensions": true
+    },
+    "include": [".vuepress/**/*.*ts"]
 }

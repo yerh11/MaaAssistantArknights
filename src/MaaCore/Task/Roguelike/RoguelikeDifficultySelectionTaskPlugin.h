@@ -3,16 +3,24 @@
 
 namespace asst
 {
-    class RoguelikeDifficultySelectionTaskPlugin : public AbstractRoguelikeTaskPlugin
-    {
-    public:
-        using AbstractRoguelikeTaskPlugin::AbstractRoguelikeTaskPlugin;
-        virtual ~RoguelikeDifficultySelectionTaskPlugin() override = default;
+class RoguelikeDifficultySelectionTaskPlugin : public AbstractRoguelikeTaskPlugin
+{
+public:
+    using AbstractRoguelikeTaskPlugin::AbstractRoguelikeTaskPlugin;
+    virtual ~RoguelikeDifficultySelectionTaskPlugin() override = default;
+    virtual bool verify(AsstMsg msg, const json::value& details) const override;
+    virtual bool load_params(const json::value& params) override;
 
-    public:
-        virtual bool verify(AsstMsg msg, const json::value& details) const override;
+protected:
+    virtual bool _run() override;
 
-    protected:
-        virtual bool _run() override;
-    };
+private:
+    int detect_current_difficulty() const;
+    bool select_difficulty(const int difficulty = 0);
+
+    int m_current_difficulty = -1;
+    mutable bool m_has_changed = false;
+
+    mutable int m_collectible_difficulty = -1;
+};
 }

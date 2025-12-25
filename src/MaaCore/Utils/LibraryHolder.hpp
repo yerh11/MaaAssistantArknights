@@ -6,13 +6,12 @@
 #include <type_traits>
 
 #ifdef _WIN32
-#include "Utils/Platform/SafeWindows.h"
+#include "MaaUtils/SafeWindows.hpp"
 #else
 #include <dlfcn.h>
 #endif
 
 #include "Utils/Logger.hpp"
-
 
 namespace asst
 {

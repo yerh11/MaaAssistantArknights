@@ -6,20 +6,19 @@
 #include "Task/Fight/DrGrandetTaskPlugin.h"
 #include "Task/Fight/FightTimesTaskPlugin.h"
 #include "Task/Fight/MedicineCounterTaskPlugin.h"
-#include "Task/Fight/SanityBeforeStageTaskPlugin.h"
 #include "Task/Fight/SideStoryReopenTask.h"
 #include "Task/Fight/StageDropsTaskPlugin.h"
 #include "Task/Fight/StageNavigationTask.h"
 #include "Task/ProcessTask.h"
 #include "Utils/Logger.hpp"
-#include "Utils/Ranges.hpp"
+#include <ranges>
 
-asst::FightTask::FightTask(const AsstCallback& callback, Assistant* inst)
-    : InterfaceTask(callback, inst, TaskType),
-      m_start_up_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
-      m_stage_navigation_task_ptr(std::make_shared<StageNavigationTask>(m_callback, m_inst, TaskType)),
-      m_fight_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
-      m_sidestory_reopen_task_ptr(std::make_shared<SideStoryReopenTask>(m_callback, m_inst, TaskType))
+asst::FightTask::FightTask(const AsstCallback& callback, Assistant* inst) :
+    InterfaceTask(callback, inst, TaskType),
+    m_start_up_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
+    m_stage_navigation_task_ptr(std::make_shared<StageNavigationTask>(m_callback, m_inst, TaskType)),
+    m_fight_task_ptr(std::make_shared<ProcessTask>(m_callback, m_inst, TaskType)),
+    m_sidestory_reopen_task_ptr(std::make_shared<SideStoryReopenTask>(m_callback, m_inst, TaskType))
 {
     LogTraceFunction;
 
@@ -50,9 +49,8 @@ asst::FightTask::FightTask(const AsstCallback& callback, Assistant* inst)
     m_stage_drops_plugin_ptr->set_retry_times(0);
     m_dr_grandet_task_plugin_ptr = m_fight_task_ptr->register_plugin<DrGrandetTaskPlugin>();
     m_dr_grandet_task_plugin_ptr->set_enable(false);
-    m_fight_task_ptr->register_plugin<SanityBeforeStageTaskPlugin>()->set_retry_times(3);
-    m_fight_times_task_plugin_prt = m_fight_task_ptr->register_plugin<FightTimesTaskPlugin>();
-    m_fight_times_task_plugin_prt->set_retry_times(3);
+    m_fight_times_prt = m_fight_task_ptr->register_plugin<FightTimesTaskPlugin>();
+    m_fight_times_prt->set_retry_times(3);
     m_medicine_plugin = m_fight_task_ptr->register_plugin<MedicineCounterTaskPlugin>();
 
     m_subtasks.emplace_back(m_start_up_task_ptr);
@@ -71,10 +69,23 @@ bool asst::FightTask::set_params(const json::value& params)
     const int stone = params.get("stone", 0);
     const int times = params.get("times", INT_MAX);
     const int series = params.get("series", 1);
-    if (series < 1 || series > 6) {
+
+    m_fight_times_prt->set_fight_times(times);
+    if (series == 1000) {
+        Log.error("================  DEPRECATED  ================");
+        Log.error("series = 1000, 已弃用");
+        Log.error("================  DEPRECATED  ================");
+        return false;
+    } // v5.16.0
+    else if (series < -1 || series > 6) {
         Log.error("Invalid series");
         return false;
     }
+    else {
+        m_medicine_plugin->set_reduce_when_exceed(series == 0);
+        m_fight_times_prt->set_series(series);
+    }
+
     bool enable_penguin = params.get("report_to_penguin", false);
     bool enable_yituliu = params.get("report_to_yituliu", false);
     std::string penguin_id = params.get("penguin_id", "");
@@ -127,7 +138,6 @@ bool asst::FightTask::set_params(const json::value& params)
         .set_times_limit("StoneConfirm", stone)
         .set_times_limit("StartButton1", times)
         .set_times_limit("StartButton2", times);
-    m_fight_times_task_plugin_prt->set_series(series);
     m_medicine_plugin->set_count(medicine);
     m_medicine_plugin->set_use_expiring(expiring_medicine != 0);
     m_medicine_plugin->set_dr_grandet(is_dr_grandet);

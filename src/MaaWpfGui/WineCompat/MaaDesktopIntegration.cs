@@ -1,6 +1,6 @@
-// <copyright file="MaaWineBridge.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// <copyright file="MaaDesktopIntegration.cs" company="MaaAssistantArknights">
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -18,7 +18,7 @@ namespace MaaWpfGui.WineCompat;
 
 internal unsafe class MaaDesktopIntegration
 {
-    public static bool Availabile { get; }
+    public static bool Available { get; }
 
     static MaaDesktopIntegration()
     {
@@ -28,7 +28,7 @@ internal unsafe class MaaDesktopIntegration
             {
                 glib_default_main_loop_start();
                 AppDomain.CurrentDomain.ProcessExit += (sender, args) => glib_default_main_loop_stop();
-                Availabile = true;
+                Available = true;
             }
             catch
             {

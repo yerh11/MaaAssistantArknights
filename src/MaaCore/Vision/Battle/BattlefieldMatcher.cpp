@@ -1,9 +1,9 @@
 #include "BattlefieldMatcher.h"
 
-#include "Utils/Ranges.hpp"
 #include <algorithm>
+#include <ranges>
 
-#include "Utils/NoWarningCV.h"
+#include "MaaUtils/NoWarningCV.hpp"
 
 #include "Config/TaskData.h"
 #include "Config/TemplResource.h"
@@ -26,13 +26,18 @@ void BattlefieldMatcher::set_total_kills_prompt(int prompt)
     m_total_kills_prompt = prompt;
 }
 
+void asst::BattlefieldMatcher::set_image_prev(const cv::Mat& image)
+{
+    m_image_prev = image;
+}
+
 BattlefieldMatcher::ResultOpt BattlefieldMatcher::analyze() const
 {
     Result result;
 
     if (m_object_of_interest.flag) {
         result.pause_button = pause_button_analyze();
-        if (!result.pause_button && !hp_flag_analyze() && !kills_flag_analyze()) {
+        if (!result.pause_button && !hp_flag_analyze() && !kills_flag_analyze() && !cost_symbol_analyze()) {
             // flag 表明当前画面是在战斗场景的，不在的就没必要识别了
             return std::nullopt;
         }
@@ -44,14 +49,14 @@ BattlefieldMatcher::ResultOpt BattlefieldMatcher::analyze() const
 
     if (m_object_of_interest.kills) {
         result.kills = kills_analyze();
-        if (!result.kills) {
+        if (result.kills.status == MatchStatus::Invalid) {
             return std::nullopt;
         }
     }
 
     if (m_object_of_interest.costs) {
         result.costs = costs_analyze();
-        if (!result.costs) {
+        if (result.costs.status == MatchStatus::Invalid) {
             return std::nullopt;
         }
     }
@@ -70,8 +75,8 @@ BattlefieldMatcher::ResultOpt BattlefieldMatcher::analyze() const
 
 std::vector<battle::DeploymentOper> BattlefieldMatcher::deployment_analyze() const
 {
-    MultiMatcher flags_analyzer(m_image);
     const auto& flag_task_ptr = Task.get("BattleOpersFlag");
+    MultiMatcher flags_analyzer(m_image);
     flags_analyzer.set_task_info(flag_task_ptr);
 
 #ifndef ASST_DEBUG
@@ -131,8 +136,13 @@ std::vector<battle::DeploymentOper> BattlefieldMatcher::deployment_analyze() con
 
 #ifdef ASST_DEBUG
         if (oper.cooling) {
-            cv::putText(m_image_draw, "cooling", cv::Point(oper.rect.x, oper.rect.y - 20), 1, 1.2,
-                        cv::Scalar(0, 0, 255));
+            cv::putText(
+                m_image_draw,
+                "cooling",
+                cv::Point(oper.rect.x, oper.rect.y - 20),
+                1,
+                1.2,
+                cv::Scalar(0, 0, 255));
         }
 #endif
 
@@ -166,7 +176,7 @@ battle::Role BattlefieldMatcher::oper_role_analyze(const Rect& roi) const
     role_analyzer.set_task_info(TaskName);
     role_analyzer.set_roi(roi);
 
-    for (const auto& role_name : RoleMap | views::keys) {
+    for (const auto& role_name : RoleMap | std::views::keys) {
         role_analyzer.append_templ(TaskName + role_name + Ext);
     }
     auto role_opt = role_analyzer.analyze();
@@ -190,28 +200,20 @@ bool BattlefieldMatcher::oper_cooling_analyze(const Rect& roi) const
 {
     const auto cooling_task_ptr = Task.get<MatchTaskInfo>("BattleOperCooling");
 
-    auto img_roi = m_image(make_rect<cv::Rect>(roi));
-    cv::Mat hsv;
-    cv::cvtColor(img_roi, hsv, cv::COLOR_BGR2HSV);
-    int h_low = cooling_task_ptr->mask_range.first;
-    int h_up = cooling_task_ptr->mask_range.second;
-    int s_low = cooling_task_ptr->specific_rect.x;
-    int s_up = cooling_task_ptr->specific_rect.y;
-    int v_low = cooling_task_ptr->specific_rect.width;
-    int v_up = cooling_task_ptr->specific_rect.height;
-
-    cv::Mat bin;
-    cv::inRange(hsv, cv::Scalar(h_low, s_low, v_low), cv::Scalar(h_up, s_up, v_up), bin);
-
-    int count = 0;
-    for (int i = 0; i != bin.rows; ++i) {
-        for (int j = 0; j != bin.cols; ++j) {
-            cv::uint8_t value = bin.at<cv::uint8_t>(i, j);
-            if (value) {
-                ++count;
-            }
-        }
+    if (cooling_task_ptr->color_scales.size() != 1 ||
+        !std::holds_alternative<MatchTaskInfo::ColorRange>(cooling_task_ptr->color_scales.front())) {
+        Log.error(__FUNCTION__, "| color_scales in `BattleOperCooling` is not a ColorRange");
+        return false;
     }
+
+    const auto& color_scale = std::get<MatchTaskInfo::ColorRange>(cooling_task_ptr->color_scales.front());
+    auto img_roi = m_image(make_rect<cv::Rect>(roi));
+
+    cv::Mat hsv, bin;
+    cv::cvtColor(img_roi, hsv, cv::COLOR_BGR2HSV);
+    cv::inRange(hsv, color_scale.first, color_scale.second, bin);
+    int count = cv::countNonZero(bin);
+
     // Log.trace("oper_cooling_analyze |", count);
     return count >= cooling_task_ptr->special_params.front();
 }
@@ -269,15 +271,18 @@ bool BattlefieldMatcher::kills_flag_analyze() const
     return flag_analyzer.analyze().has_value();
 }
 
-std::optional<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
+BattlefieldMatcher::MatchResult<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
 {
+    if (hit_kills_cache()) {
+        return { .status = MatchStatus::HitCache };
+    }
     TemplDetOCRer kills_analyzer(m_image);
     kills_analyzer.set_task_info("BattleKillsFlag", "BattleKills");
     kills_analyzer.set_replace(Task.get<OcrTaskInfo>("NumberOcrReplace")->replace_map);
-
+    kills_analyzer.set_ocr_use_raw(true);
     auto kills_opt = kills_analyzer.analyze();
     if (!kills_opt) {
-        return std::nullopt;
+        return {};
     }
     const std::string& kills_text = kills_opt->front().text;
 
@@ -290,7 +295,7 @@ std::optional<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
             // 第一次识别就识别错了，识别成了 "0141"
             if (kills_text.at(0) != '0') {
                 Log.error("m_total_kills_prompt is zero");
-                return std::nullopt;
+                return {};
             }
             pos = 1;
         }
@@ -298,7 +303,7 @@ std::optional<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
             size_t pre_pos = kills_text.find(std::to_string(m_total_kills_prompt));
             if (pre_pos == std::string::npos || pre_pos == 0) {
                 Log.error("can't get pre_pos");
-                return std::nullopt;
+                return {};
             }
             Log.trace("pre total kills pos:", pre_pos);
             pos = pre_pos - 1;
@@ -307,15 +312,16 @@ std::optional<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
 
     // 例子中的"0"
     std::string kills_count = kills_text.substr(0, pos);
-    if (kills_count.empty() || !ranges::all_of(kills_count, [](char c) -> bool { return std::isdigit(c); })) {
-        return std::nullopt;
+    if (kills_count.empty() || !std::ranges::all_of(kills_count, [](char c) -> bool { return std::isdigit(c); })) {
+        return {};
     }
     int kills = std::stoi(kills_count);
 
     // 例子中的"41"
     std::string total_kills_text = kills_text.substr(pos + 1, std::string::npos);
     int total_kills = 0;
-    if (total_kills_text.empty() || !ranges::all_of(total_kills_text, [](char c) -> bool { return std::isdigit(c); })) {
+    if (total_kills_text.empty() ||
+        !std::ranges::all_of(total_kills_text, [](char c) -> bool { return std::isdigit(c); })) {
         Log.warn("total kills recognition failed, set to", m_total_kills_prompt);
         total_kills = m_total_kills_prompt;
     }
@@ -325,25 +331,83 @@ std::optional<std::pair<int, int>> BattlefieldMatcher::kills_analyze() const
     total_kills = std::max(total_kills, m_total_kills_prompt);
 
     Log.trace("Kills:", kills, "/", total_kills);
-    return std::make_pair(kills, total_kills);
+    return { .value = std::make_pair(kills, total_kills), .status = MatchStatus::Success };
 }
 
-std::optional<int> BattlefieldMatcher::costs_analyze() const
+bool asst::BattlefieldMatcher::hit_kills_cache() const
 {
+    if (m_image_prev.empty() || m_image.cols != m_image_prev.cols || m_image.rows != m_image_prev.rows) {
+        return false;
+    }
+    Matcher flag_match(m_image);
+    flag_match.set_task_info("BattleKillsFlag");
+    if (!flag_match.analyze()) {
+        return false;
+    }
+    const auto& flag_rect = flag_match.get_result().rect;
+    const auto& task = Task.get("BattleKills");
+    const auto& roi = flag_rect.move(task->roi);
+
+    cv::Mat kills_image_cache = make_roi(m_image_prev, roi);
+    cv::Mat kills_image = make_roi(m_image, roi);
+    cv::cvtColor(kills_image_cache, kills_image_cache, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(kills_image, kills_image, cv::COLOR_BGR2GRAY);
+    cv::Mat match;
+    cv::matchTemplate(kills_image, kills_image_cache, match, cv::TM_CCOEFF_NORMED);
+    double mark;
+    cv::minMaxLoc(match, nullptr, &mark);
+    // 正常在 0.997-1 之间波动, 少有0.995
+    // _5->_6 的分数最高, 可达0.94
+    const double threshold = static_cast<double>(task->special_params[0]) / 100;
+    return mark > threshold;
+}
+
+bool BattlefieldMatcher::cost_symbol_analyze() const
+{
+    Matcher flag_analyzer(m_image);
+    flag_analyzer.set_task_info("BattleCostFlag");
+    return flag_analyzer.analyze().has_value();
+}
+
+BattlefieldMatcher::MatchResult<int> BattlefieldMatcher::costs_analyze() const
+{
+    if (hit_costs_cache()) {
+        return { .status = MatchStatus::HitCache };
+    }
     RegionOCRer cost_analyzer(m_image);
     cost_analyzer.set_task_info("BattleCostData");
-    cost_analyzer.set_replace(Task.get<OcrTaskInfo>("NumberOcrReplace")->replace_map);
-
     auto cost_opt = cost_analyzer.analyze();
     if (!cost_opt) {
-        return std::nullopt;
+        return {};
     }
-    const std::string& cost_str = cost_opt->text;
 
-    if (cost_str.empty() || !ranges::all_of(cost_str, [](const char& c) -> bool { return std::isdigit(c); })) {
-        return std::nullopt;
+    int cost = 0;
+    if (utils::chars_to_number(cost_opt->text, cost)) {
+        return { .value = cost, .status = MatchStatus::Success };
     }
-    return std::stoi(cost_str);
+    return {};
+}
+
+bool asst::BattlefieldMatcher::hit_costs_cache() const
+{
+    if (m_image_prev.empty() || m_image.cols != m_image_prev.cols || m_image.rows != m_image_prev.rows) {
+        return false;
+    }
+    const auto& task = Task.get("BattleCostData");
+    cv::Mat cost_image_cache = make_roi(m_image_prev, task->roi);
+    cv::Mat cost_image = make_roi(m_image, task->roi);
+    cv::cvtColor(cost_image_cache, cost_image_cache, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(cost_image, cost_image, cv::COLOR_BGR2GRAY);
+    cv::normalize(cost_image_cache, cost_image_cache, 0, 255, cv::NORM_MINMAX);
+    cv::normalize(cost_image, cost_image, 0, 255, cv::NORM_MINMAX);
+    cv::Mat match;
+    cv::matchTemplate(cost_image, cost_image_cache, match, cv::TM_CCOEFF_NORMED);
+    double mark;
+    cv::minMaxLoc(match, nullptr, &mark);
+    // 正常在 0.997-1 之间波动, 少有0.995
+    // _5->_6 的分数最高, 0.85上下
+    const double threshold = static_cast<double>(task->special_params[0]) / 100;
+    return mark > threshold;
 }
 
 bool BattlefieldMatcher::pause_button_analyze() const
@@ -361,9 +425,14 @@ bool BattlefieldMatcher::pause_button_analyze() const
 
 #ifdef ASST_DEBUG
     cv::rectangle(m_image_draw, make_rect<cv::Rect>(task_ptr->roi), cv::Scalar(0, 0, 255), 2);
-    cv::putText(m_image_draw, std::to_string(count) + "/" + std::to_string(count_threshold),
-                cv::Point(task_ptr->roi.x, task_ptr->roi.y + task_ptr->roi.height + 10), cv::FONT_HERSHEY_PLAIN, 1.2,
-                cv::Scalar(255, 255, 255), 2);
+    cv::putText(
+        m_image_draw,
+        std::to_string(count) + "/" + std::to_string(count_threshold),
+        cv::Point(task_ptr->roi.x, task_ptr->roi.y + task_ptr->roi.height + 10),
+        cv::FONT_HERSHEY_PLAIN,
+        1.2,
+        cv::Scalar(255, 255, 255),
+        2);
 #endif
 
     return count > count_threshold;
@@ -411,9 +480,14 @@ bool asst::BattlefieldMatcher::speed_button_analyze() const
 
 #ifdef ASST_DEBUG
     cv::rectangle(m_image_draw, make_rect<cv::Rect>(task_ptr->roi), cv::Scalar(0, 0, 255), 2);
-    cv::putText(m_image_draw, std::to_string(count) + "/" + std::to_string(count_threshold),
-                cv::Point(task_ptr->roi.x, task_ptr->roi.y + task_ptr->roi.height + 20), cv::FONT_HERSHEY_PLAIN, 1.2,
-                cv::Scalar(255, 255, 255), 2);
+    cv::putText(
+        m_image_draw,
+        std::to_string(count) + "/" + std::to_string(count_threshold),
+        cv::Point(task_ptr->roi.x, task_ptr->roi.y + task_ptr->roi.height + 20),
+        cv::FONT_HERSHEY_PLAIN,
+        1.2,
+        cv::Scalar(255, 255, 255),
+        2);
 #endif
 
     return count > count_threshold;

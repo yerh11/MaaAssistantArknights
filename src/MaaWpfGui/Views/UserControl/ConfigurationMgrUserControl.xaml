@@ -7,6 +7,7 @@
     xmlns:controls="clr-namespace:MaaWpfGui.Styles.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:dd="urn:gong-wpf-dragdrop"
+    xmlns:hc="https://handyorg.github.io/handycontrol"
     xmlns:helper="clr-namespace:MaaWpfGui.Helper"
     xmlns:local="clr-namespace:MaaWpfGui"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -15,6 +16,7 @@
     xmlns:ui="clr-namespace:MaaWpfGui.ViewModels.UI"
     xmlns:viewModels="clr-namespace:MaaWpfGui.ViewModels"
     xmlns:vm="clr-namespace:MaaWpfGui"
+    d:Background="White"
     d:DataContext="{d:DesignInstance {x:Type ui:SettingsViewModel}}"
     d:DesignWidth="550"
     mc:Ignorable="d">
@@ -23,10 +25,13 @@
         VerticalAlignment="Center"
         Orientation="Vertical">
         <ComboBox
-            Width="200"
+            Width="250"
             Margin="10"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
+            HorizontalContentAlignment="Stretch"
+            hc:TitleElement.HorizontalAlignment="Center"
+            hc:TitleElement.Title="{DynamicResource ConfigurationName}"
             IsEditable="True"
             IsHitTestVisible="{Binding Idle}"
             IsReadOnly="True"
@@ -35,7 +40,7 @@
             SelectedValuePath="Value">
             <ComboBox.ItemTemplate>
                 <DataTemplate>
-                    <Grid Width="{c:Binding 'ActualWidth - 20', RelativeSource={RelativeSource AncestorType=ComboBox}}">
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -58,23 +63,23 @@
         </ComboBox>
         <Grid Width="250">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <controls:TextBlock Grid.Column="0" Text="{DynamicResource ConfigurationName}" />
             <TextBox
-                Grid.Column="1"
+                Grid.Column="0"
                 Width="Auto"
-                Margin="10"
+                hc:BorderElement.CornerRadius="4,0,0,4"
                 Text="{Binding NewConfigurationName, UpdateSourceTrigger=PropertyChanged}">
                 <TextBox.InputBindings>
                     <KeyBinding Key="Enter" Command="{s:Action AddConfiguration}" />
                 </TextBox.InputBindings>
             </TextBox>
             <Button
-                Grid.Column="2"
+                Grid.Column="1"
                 Width="60"
+                hc:BorderElement.CornerRadius="0,4,4,0"
+                BorderThickness="0,1,1,1"
                 Command="{s:Action AddConfiguration}"
                 Content="{DynamicResource AddConfiguration}" />
         </Grid>

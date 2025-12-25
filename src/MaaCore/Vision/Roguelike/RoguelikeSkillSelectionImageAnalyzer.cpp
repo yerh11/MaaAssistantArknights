@@ -1,6 +1,6 @@
 #include "RoguelikeSkillSelectionImageAnalyzer.h"
 
-#include "Utils/NoWarningCV.h"
+#include "MaaUtils/NoWarningCV.hpp"
 
 #include "Config/Roguelike/RoguelikeRecruitConfig.h"
 #include "Config/TaskData.h"
@@ -50,12 +50,12 @@ std::string asst::RoguelikeSkillSelectionImageAnalyzer::name_analyze(const Rect&
 {
     RegionOCRer analyzer;
     auto name_task_ptr = Task.get<OcrTaskInfo>("RoguelikeSkillSelectionName");
-    analyzer.set_bin_threshold(name_task_ptr->specific_rect.x);
     analyzer.set_task_info(name_task_ptr);
     analyzer.set_image(m_image);
     analyzer.set_roi(roi.move(name_task_ptr->roi));
-    analyzer.set_replace(std::dynamic_pointer_cast<OcrTaskInfo>(Task.get("CharsNameOcrReplace"))->replace_map,
-                         std::dynamic_pointer_cast<OcrTaskInfo>(Task.get("CharsNameOcrReplace"))->replace_full);
+    analyzer.set_replace(
+        std::dynamic_pointer_cast<OcrTaskInfo>(Task.get("CharsNameOcrReplace"))->replace_map,
+        std::dynamic_pointer_cast<OcrTaskInfo>(Task.get("CharsNameOcrReplace"))->replace_full);
 
     if (!analyzer.analyze()) {
         return {};

@@ -1,6 +1,6 @@
 // <copyright file="IExternalNotificationProvider.cs" company="MaaAssistantArknights">
-// MaaWpfGui - A part of the MaaCoreArknights project
-// Copyright (C) 2021 MistEO and Contributors
+// Part of the MaaWpfGui project, maintained by the MaaAssistantArknights team (Maa Team)
+// Copyright (C) 2021-2025 MaaAssistantArknights Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License v3.0 only as published by
@@ -13,16 +13,15 @@
 
 using System.Threading.Tasks;
 
-namespace MaaWpfGui.Services.Notification
+namespace MaaWpfGui.Services.Notification;
+
+public interface IExternalNotificationProvider
 {
-    public interface IExternalNotificationProvider
-    {
-        /// <summary>
-        ///     Send notification
-        /// </summary>
-        /// <param name="title">The title of the notification</param>
-        /// <param name="content">The content of the notification</param>
-        /// <returns>True for success, False for fail</returns>
-        public Task<bool> SendAsync(string title, string content);
-    }
+    /// <summary>
+    ///     Send notification
+    /// </summary>
+    /// <param name="title">The title of the notification</param>
+    /// <param name="content">The content of the notification</param>
+    /// <returns>True for success, False for fail</returns>
+    public Task<bool> SendAsync(string title, string content);
 }
